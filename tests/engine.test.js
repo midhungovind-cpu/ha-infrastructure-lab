@@ -347,6 +347,28 @@ test("VM shutdown, start, and reboot update persistent host state",()=>{
   assert.equal(state.hosts.web01.online,true);
 });
 
+test("virsh console enters a running guest by ID or name and returns to the hypervisor",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@kvm01");
+  assert.ok(completions("virsh c",state,session).includes("console"));
+  assert.match(execute(state,session,"virsh console 1"),/Connected to domain 'web01-vm'/);
+  assert.equal(session.host,"web01");
+  assert.equal(session.user,"root");
+  assert.equal(execute(state,session,"hostname"),"web01");
+  assert.match(execute(state,session,"exit"),/Connection to lab node closed/);
+  assert.equal(session.host,"kvm01");
+  assert.match(execute(state,session,"virsh console web01-vm"),/Escape character is \^\]/);
+  assert.equal(session.host,"web01");
+});
+
+test("virsh console rejects stopped guests without changing the active terminal",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@kvm01");
+  execute(state,session,"virsh shutdown web01-vm");
+  assert.match(execute(state,session,"virsh console web01-vm"),/Guest is not running/);
+  assert.equal(session.host,"kvm01");
+});
+
 test("shutdown closes the simulated SSH session and reboot returns online",()=>{
   const state=createInitialState(),session=newSession();
   execute(state,session,"ssh root@web01");

@@ -1,5 +1,5 @@
 import { loadState, saveState, resetState, createInitialState, event } from "./state.js?v=20260802.15";
-import { newSession, prompt as terminalPrompt, execute, completions, injectScenario, saveEditedFile, setHostPower } from "./engine.js?v=20260802.15";
+import { newSession, prompt as terminalPrompt, execute, completions, injectScenario, saveEditedFile, setHostPower } from "./engine.js?v=20260802.16";
 import { scenarios, assessScenario } from "./scenarios.js?v=20260802.15";
 
 let state=loadState(), sessions=[newSession(1)], activeSession=1, editorContext=null;
