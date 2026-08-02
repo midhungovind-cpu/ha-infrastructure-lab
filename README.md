@@ -4,6 +4,8 @@ Interactive, browser-based High Availability incident-response simulator with pe
 
 It models fictional CentOS 8-like nodes, clusters, replication, storage incidents, and an allowlisted Linux-style terminal. It has no external connections and never executes entered commands on the host.
 
+![Simulated MariaDB failover, verified with Pacemaker status](docs/failover-demo.gif)
+
 ![Conceptual HA reference architecture](docs/architecture.png)
 
 ## What this demonstrates
