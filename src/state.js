@@ -1,5 +1,5 @@
 export const STORAGE_KEY = "ha-infrastructure-lab.v1";
-export const STATE_VERSION = 7;
+export const STATE_VERSION = 8;
 
 const primary = [
   ["dns01", "10.10.50.11", "DNS / health routing"], ["haproxy01", "10.10.10.21", "HAProxy active"], ["haproxy02", "10.10.10.22", "HAProxy standby"],
@@ -60,7 +60,8 @@ function directoriesFor(files,username="labadmin"){
 }
 
 function makeHost([hostname, ip, role], dc="primary") {
-  const files=filesFor(hostname);return { hostname, ip, role, dc, online:true, uptime: "3 days, 06:42", load:"0.08, 0.05, 0.01", disk: /^(dr-)?san\d{2}$/.test(hostname) ? 61 : 34, memory: hostname.includes("mysql") ? 43 : 27, services:serviceFor(hostname), files,directories:directoriesFor(files), history:[], interfaces:[{name:"lo",ip:"127.0.0.1/8",state:"UP"},{name:"ens192",ip:`${ip}/24`,state:"UP"}], routes:[`default via ${dc==="primary"?"10.10":"10.20"}.0.1 dev ens192`, `${dc==="primary"?"10.10":"10.20"}.0.0/16 dev ens192 proto kernel scope link src ${ip}`], connections:{br0:{type:"bridge",device:"br0",state:"up",address:`${ip}/24`},br1:{type:"bridge",device:"br1",state:"up",address:dc==="primary"?"10.10.40.10/24":"10.20.40.10/24"},"bridge-br1":{type:"ethernet",device:"eno2",state:"up",master:"br1"}}, users:{root:{uid:0,groups:"root"},labadmin:{uid:1101,groups:"labadmin,wheel"}}, mounts:["/dev/mapper/lab-root on / type xfs (rw,relatime)","10.10.30.10:/exports/app on /srv/app type nfs4 (rw,relatime,_netdev)"], packages:["bash-4.4.20-8.el8.x86_64","systemd-239-74.el8.x86_64","openssh-server-8.0p1-25.el8.x86_64"], boot:"2026-07-29 03:30" };
+  const files=filesFor(hostname),isHypervisor=hostname.includes("kvm"),connections=isHypervisor?{br0:{type:"bridge",device:"br0",state:"up",address:`${ip}/24`},br1:{type:"bridge",device:"br1",state:"up",address:dc==="primary"?"10.10.40.10/24":"10.20.40.10/24"},"bridge-br1":{type:"ethernet",device:"eno2",state:"up",master:"br1"}}:{ens192:{type:"ethernet",device:"ens192",state:"up",address:`${ip}/24`}};
+  return { hostname, ip, role, dc, online:true, uptime: "3 days, 06:42", load:"0.08, 0.05, 0.01", disk: /^(dr-)?san\d{2}$/.test(hostname) ? 61 : 34, memory: hostname.includes("mysql") ? 43 : 27, services:serviceFor(hostname), files,directories:directoriesFor(files), history:[], interfaces:[{name:"lo",ip:"127.0.0.1/8",state:"UP"},{name:"ens192",ip:`${ip}/24`,state:"UP"}], routes:[`default via ${dc==="primary"?"10.10":"10.20"}.0.1 dev ens192`, `${dc==="primary"?"10.10":"10.20"}.0.0/16 dev ens192 proto kernel scope link src ${ip}`], connections, users:{root:{uid:0,groups:"root"},labadmin:{uid:1101,groups:"labadmin,wheel"}}, mounts:["/dev/mapper/lab-root on / type xfs (rw,relatime)","10.10.30.10:/exports/app on /srv/app type nfs4 (rw,relatime,_netdev)"], packages:["bash-4.4.20-8.el8.x86_64","systemd-239-74.el8.x86_64","openssh-server-8.0p1-25.el8.x86_64"], boot:"2026-07-29 03:30" };
 }
 
 export function createInitialState() {

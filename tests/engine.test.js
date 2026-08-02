@@ -369,6 +369,33 @@ test("virsh console rejects stopped guests without changing the active terminal"
   assert.equal(session.host,"kvm01");
 });
 
+test("guest bridge configuration is stateful and brctl reflects the active bridge",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@web01");
+  assert.match(execute(state,session,"nmcli con show"),/ens192/);
+  assert.doesNotMatch(execute(state,session,"nmcli con show"),/\bbr0\b/);
+  assert.equal(execute(state,session,"bridge link show"),"No bridge slave interfaces.");
+  assert.match(execute(state,session,"nmcli con add type ethernet slave-type bridge con-name bridge-br0 ifname ens192 master br0"),/master connection 'br0' not found/);
+  assert.match(execute(state,session,"nmcli con add type bridge ifname br0 con-name br0"),/successfully added/);
+  assert.match(execute(state,session,"nmcli con add type ethernet slave-type bridge con-name bridge-br0 ifname ens192 master br0"),/successfully added/);
+  assert.match(execute(state,session,"nmcli con up br0"),/successfully activated/);
+  assert.match(execute(state,session,"ip link show"),/br0/);
+  assert.match(execute(state,session,"ip a"),/inet 10\.10\.12\.21\/24 scope global br0/);
+  assert.match(execute(state,session,"bridge link show"),/eno2|ens192/);
+  assert.match(execute(state,session,"brctl show"),/br0[\s\S]*ens192/);
+});
+
+test("virsh edit opens and persists a fictional VM XML configuration",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@kvm01");
+  const opened=execute(state,session,"virsh edit 1");
+  assert.equal(opened.editor.command,"virsh edit");
+  assert.equal(opened.editor.path,"/etc/libvirt/qemu/web01-vm.xml");
+  assert.match(opened.editor.content,/<name>web01-vm<\/name>/);
+  saveEditedFile(state,"kvm01",opened.editor.path,opened.editor.content.replace("<vcpu placement='static'>4</vcpu>","<vcpu placement='static'>6</vcpu>"),"root");
+  assert.match(execute(state,session,"virsh edit web01-vm").editor.content,/>6<\/vcpu>/);
+});
+
 test("shutdown closes the simulated SSH session and reboot returns online",()=>{
   const state=createInitialState(),session=newSession();
   execute(state,session,"ssh root@web01");
