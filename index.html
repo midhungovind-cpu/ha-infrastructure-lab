@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HA Infrastructure Lab</title>
+    <link rel="stylesheet" href="styles.css?v=20260802.15" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div><span class="eyebrow">OPERATIONS SIMULATOR · BUILD 2026.08.02.15</span><h1>HA Infrastructure Lab</h1></div>
+      <div class="notice">Simulated HA training environment — no real infrastructure access.</div>
+      <div class="header-actions"><button id="saveSnapshot">Save snapshot</button><button id="resetLab" class="danger">Reset lab</button></div>
+    </header>
+    <main>
+      <aside class="sidebar">
+        <nav class="mode-tabs" aria-label="Application sections">
+          <button class="active" data-panel="dashboard">Dashboard</button>
+          <button data-panel="terminal">Terminal</button>
+          <button data-panel="scenarios">Exercises</button>
+          <button data-panel="snapshots">Snapshots</button>
+        </nav>
+        <section><h2>Sites</h2><div id="siteSummary"></div></section>
+        <section><h2>Active alerts</h2><div id="alertList"></div></section>
+        <section><h2>Quick access</h2><div id="nodeQuickList" class="quick-list"></div></section>
+      </aside>
+      <section class="content">
+        <section id="dashboard" class="panel active">
+          <div class="metric-grid" id="metrics"></div>
+          <div class="dashboard-grid">
+            <article class="card wide"><div class="card-title"><h2>Infrastructure topology</h2><span id="topologyStatus"></span></div><div id="topology" class="topology"></div></article>
+            <article class="card"><h2>HA resources</h2><div id="haResources"></div></article>
+            <article class="card"><h2>Replication & storage</h2><div id="replication"></div></article>
+            <article class="card"><h2>Incident timeline</h2><div id="timeline" class="timeline"></div></article>
+          </div>
+        </section>
+        <section id="terminal" class="panel">
+          <div class="terminal-tabs" id="terminalTabs"></div>
+          <div class="terminal-shell"><div id="terminalOutput" class="terminal-output" aria-live="polite"></div><div class="command-line"><span id="prompt"></span><input id="terminalInput" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Linux command" /></div></div>
+          <p class="terminal-help">Try <code>ssh db01</code>, <code>pcs status</code>, <code>systemctl stop mariadb</code>, <code>mysql</code>, or <code>help</code>. Use ↑/↓ history, Tab completion, Ctrl+C, and clear.</p>
+        </section>
+        <section id="scenarios" class="panel"><div class="section-heading"><div><span class="eyebrow">GUIDED PRACTICE</span><h2>Incident exercises</h2></div><p id="exerciseProgress">Solutions stay hidden until you request an explanation.</p></div><div id="scenarioList" class="scenario-grid"></div></section>
+        <section id="snapshots" class="panel"><div class="section-heading"><div><span class="eyebrow">PERSISTENCE</span><h2>Lab snapshots</h2></div></div><div id="snapshotList" class="snapshot-list"></div></section>
+      </section>
+    </main>
+    <dialog id="detailDialog"><button class="close-dialog" aria-label="Close">×</button><div id="dialogContent"></div></dialog>
+    <dialog id="editorDialog" class="editor-dialog">
+      <div class="editor-bar">
+        <div><span id="editorMode">VIM</span><strong id="editorPath"></strong></div>
+        <div class="editor-actions"><button id="cancelEditor" class="ghost">Cancel</button><button id="saveEditor">Save file</button></div>
+      </div>
+      <textarea id="fileEditor" aria-label="Virtual file contents" spellcheck="false"></textarea>
+      <div class="editor-status"><span id="editorHost"></span><span>Ctrl+S save · Esc cancel · browser-local virtual file</span></div>
+    </dialog>
+    <script type="module" src="src/app.js?v=20260802.15"></script>
+  </body>
+</html>
