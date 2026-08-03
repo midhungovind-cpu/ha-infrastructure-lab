@@ -63,7 +63,7 @@ State persists across reconnects and page reloads. The **Exercises** tab injects
 
 The modelled topology, ownership rules, recovery flow and exercise coverage are in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
-![Conceptual HA reference architecture](docs/architecture.png)
+![HA Infrastructure Lab simulator topology showing three primary-site VIPs and a manually promoted recovery site](docs/architecture.svg)
 
 ## The drills
 

@@ -15,6 +15,8 @@ Everything runs in the browser. The terminal is an allowlisted simulator: it nev
 
 ## Topology
 
+![HA Infrastructure Lab simulator topology showing three primary-site VIPs and a manually promoted recovery site](docs/architecture.svg)
+
 ```text
                              Primary site: 10.10.0.0/16
 
