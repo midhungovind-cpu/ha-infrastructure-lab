@@ -48,7 +48,7 @@ Everything runs in the browser. The terminal is an allowlisted simulator: it nev
 | File transfer | `ftp01/02` | Pure-FTPd with TLS and a passive port range. |
 | Distributed services | `rabbitmq01-03`, `cassandra01-03`, `elasticsearch01-03` | Cluster membership, node health and allocation state are represented. |
 | Platform | `kvm01/02`, `mon01`, `bastion01` | libvirt-style VM controls, bridge state, monitoring/log fixtures and lab access. |
-| Recovery | matching `dr-` nodes | A warm simulated recovery site, promoted only by an explicit exercise flow. |
+| Recovery | `dr-` service nodes | A warm simulated recovery site, promoted only by an explicit exercise flow. |
 
 `web03` is modelled as Lighttpd with PHP-FPM. It is not an Apache/cPanel host.
 
@@ -129,8 +129,12 @@ For learning purposes, prioritise by impact and scope:
 ssh root@mysql-core01
 systemctl stop mariadb
 pcs status
+exit
+ssh root@mysql-core02
 ip a | grep 10.10.20.10
 drbdadm status
+exit
+ssh root@mysql-slave01
 mysql -e "SHOW SLAVE STATUS\G"
 ```
 

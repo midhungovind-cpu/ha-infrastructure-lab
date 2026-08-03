@@ -36,8 +36,12 @@ npm test           # engine unit tests
 ssh root@mysql-core01
 systemctl stop mariadb          # kill the write path
 pcs status                      # watch the group relocate
-ip a | grep 10.10.20.10         # confirm who owns the VIP now
-drbdadm status                  # confirm the data followed
+exit
+ssh root@mysql-core02
+ip a | grep 10.10.20.10         # confirm the new owner holds the VIP
+drbdadm status                  # confirm the promoted data role
+exit
+ssh root@mysql-slave01
 mysql -e "SHOW SLAVE STATUS\G"  # confirm the replica re-attached
 ```
 
@@ -48,13 +52,13 @@ State persists across reconnects and page reloads. The **Exercises** tab injects
 | Tier | Nodes | Mechanism |
 | --- | --- | --- |
 | Edge | haproxy01/02 | HAProxy L7 + keepalived VRRP, VIP 10.10.10.10 |
-| Cache | varnish01/02 | Varnish with health probes and grace mode |
+| Cache | varnish01/02 | Varnish cache |
 | Web | web01–03 | `web01/02`: Nginx + PHP-FPM; `web03`: Lighttpd + PHP-FPM |
 | Database | mysql-core01/02, mysql-slave01 | Pacemaker + DRBD protocol C, VIP 10.10.20.10, GTID replication |
 | Storage | san01/02 | DRBD + NFSv4 under Pacemaker, VIP 10.10.30.10 |
 | Transfer | ftp01/02 | Pure-FTPd, TLS required, passive range |
-| Queue &amp; data | rabbitmq01–03, cassandra01–03, elasticsearch01–03 | Quorum queues, NTS ring, 3 master-eligible nodes |
-| Virtualisation | kvm01/02 | libvirt, bridged networking, LVM-backed guests |
+| Queue &amp; data | rabbitmq01–03, cassandra01–03, elasticsearch01–03 | Three-node service clusters; membership, node health and allocation state |
+| Virtualisation | kvm01/02 | libvirt-style VM management and bridged networking |
 | Recovery site | `dr-` mirror of the above on 10.20.0.0/16 | Warm; promoted by declaration, never automatically |
 
 The modelled topology, ownership rules, recovery flow and exercise coverage are in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
@@ -98,7 +102,7 @@ The engine favours consistent operational behaviour over emulating every shell f
 
 ## Disclaimer
 
-All hostnames, IP addresses, credentials and configuration in this repository are fictional and exist only to model a topology. Addresses use RFC 1918 and RFC 5737 documentation ranges. Nothing here is taken from any employer or client environment.
+All hostnames, IP addresses, credentials and configuration in this repository are fictional and exist only to model a topology. Addresses use RFC 1918 private ranges. Nothing here is taken from any employer or client environment.
 
 ## License
 
