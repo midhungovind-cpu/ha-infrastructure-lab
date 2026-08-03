@@ -1,6 +1,6 @@
 import { aliases, event } from "./state.js?v=20260802.16";
 
-const knownCommands = ["help","hostname","hostnamectl","whoami","id","getent","pwd","cd","ls","tree","cat","less","head","tail","touch","mkdir","rmdir","cp","mv","rm","ln","find","grep","sed","awk","vi","vim","nano","date","uptime","free","top","ps","kill","df","du","mount","umount","lsblk","blkid","lsof","uname","rpm","yum","systemctl","journalctl","dmesg","firewall-cmd","getenforce","setenforce","ip","ping","telnet","traceroute","dig","nslookup","ss","netstat","curl","wget","nmcli","bridge","brctl","virsh","ssh","scp","rsync","sudo","su","reboot","shutdown","pcs","crm","corosync-cfgtool","corosync-quorumtool","drbdadm","drbdsetup","mysql","mysqldump","showmount","haproxy","varnishadm","rabbitmqctl","nodetool","pure-pw","history","exit","logout","clear"];
+const knownCommands = ["help","hostname","hostnamectl","whoami","id","getent","pwd","cd","ls","tree","cat","less","head","tail","sort","wc","touch","mkdir","rmdir","cp","mv","rm","ln","find","grep","egrep","sed","awk","vi","vim","nano","date","uptime","free","top","ps","kill","df","du","mount","umount","lsblk","blkid","lsof","uname","rpm","yum","systemctl","journalctl","dmesg","firewall-cmd","getenforce","setenforce","ip","ping","telnet","traceroute","dig","nslookup","ss","netstat","curl","wget","nmcli","bridge","brctl","virsh","ssh","scp","rsync","sudo","su","reboot","shutdown","pcs","crm","corosync-cfgtool","corosync-quorumtool","drbdadm","drbdsetup","mysql","mysqldump","showmount","haproxy","varnishadm","rabbitmqctl","nodetool","pure-pw","history","exit","logout","clear"];
 
 export function newSession(id=1) { return { id, host:"bastion01", user:"labadmin", cwd:"/home/labadmin", stack:[], history:[], historyIndex:0, mysql:false, output:[{kind:"system",text:"HA Infrastructure Lab console ready. Type help for supported commands."}] }; }
 export function prompt(session) { return session.mysql ? "mysql> " : `[${session.user}@${session.host} ${session.cwd === `/home/${session.user}` || session.cwd === "/root" ? "~" : session.cwd.split("/").pop() || "/"}]${session.user === "root" ? "#" : "$"}`; }
@@ -9,7 +9,7 @@ export function completions(prefix,state,session=newSession()){
   if(words.length===1)return knownCommands.filter(candidate=>candidate.startsWith(token));
   if(command==="ssh"){const at=token.lastIndexOf("@"),lead=at>=0?token.slice(0,at+1):"";return Object.keys(state.hosts).map(host=>lead+host).filter(candidate=>candidate.startsWith(token));}
   const host=state.hosts[session.host];
-  if(["cd","ls","tree","cat","less","head","tail","touch","mkdir","rmdir","cp","mv","rm","find","grep","sed","awk","vi","vim","nano","du"].includes(command)&&host){const slash=token.lastIndexOf("/"),dirToken=slash>=0?token.slice(0,slash+1):"",nameToken=slash>=0?token.slice(slash+1):token,dirPath=resolvePath(session,dirToken||session.cwd);return virtualPaths(host).filter(path=>path!==dirPath&&parentPath(path)===dirPath&&basename(path).startsWith(nameToken)).map(path=>`${dirToken}${basename(path)}${isVirtualDirectory(host,path)?"/":""}`).sort();}
+  if(["cd","ls","tree","cat","less","head","tail","sort","wc","touch","mkdir","rmdir","cp","mv","rm","find","grep","egrep","sed","awk","vi","vim","nano","du"].includes(command)&&host){const slash=token.lastIndexOf("/"),dirToken=slash>=0?token.slice(0,slash+1):"",nameToken=slash>=0?token.slice(slash+1):token,dirPath=resolvePath(session,dirToken||session.cwd);return virtualPaths(host).filter(path=>path!==dirPath&&parentPath(path)===dirPath&&basename(path).startsWith(nameToken)).map(path=>`${dirToken}${basename(path)}${isVirtualDirectory(host,path)?"/":""}`).sort();}
   if(command==="systemctl"){if(words.length===2)return ["status","start","stop","restart","enable","disable"].filter(action=>action.startsWith(token));if(words.length===3&&host)return Object.keys(host.services).map(service=>`${service}.service`).filter(service=>service.startsWith(token)).sort();}
   if(command==="pcs"){if(words.length===2)return ["status","resource","cluster","node","constraint","property"].filter(item=>item.startsWith(token));if(words[1]==="resource"&&words.length===3)return ["move","clear","cleanup"].filter(item=>item.startsWith(token));if(words[1]==="resource"&&words.length===4)return ["haproxy-group","database-group","storage-group"].filter(item=>item.startsWith(token));if(words[1]==="resource"&&words[2]==="move"&&words.length>=5)return Object.values(state.clusters).flatMap(cluster=>cluster.nodes).filter(node=>node.startsWith(token));if(words[1]==="cluster"&&words.length===3)return ["status","start"].filter(item=>item.startsWith(token));if(words[1]==="cluster"&&words[2]==="start"&&words.length===4)return Object.values(state.clusters).flatMap(cluster=>cluster.nodes).filter(node=>node.startsWith(token));}
   if(command==="virsh"){if(words.length===2)return ["list","dominfo","console","edit","start","shutdown","reboot"].filter(item=>item.startsWith(token));if(words.length===3)return Object.entries(state.vms||{}).filter(([,vm])=>vm.hypervisor===session.host).map(([name])=>name).filter(name=>name.startsWith(token));}
@@ -60,6 +60,55 @@ function shellWords(raw) {
   if(cur) out.push(cur); return out;
 }
 
+function splitPipeline(raw){
+  const segments=[];let current="",quote="",escaped=false;
+  for(let i=0;i<raw.length;i++){
+    const char=raw[i];
+    if(escaped){current+=char;escaped=false;continue;}
+    if(char==="\\"){current+=char;escaped=true;continue;}
+    if(quote){current+=char;if(char===quote)quote="";continue;}
+    if(char==="'"||char==='"'){quote=char;current+=char;continue;}
+    if(char==="|"){
+      if(raw[i+1]==="|")return {segments:[],error:"Lab shell: '||' is not supported. Run one command at a time."};
+      if(!current.trim())return {segments:[],error:"Lab shell: empty pipeline stage."};
+      segments.push(current.trim());current="";continue;
+    }
+    current+=char;
+  }
+  if(quote)return {segments:[],error:"Lab shell: unmatched quote."};
+  if(!current.trim()&&segments.length)return {segments:[],error:"Lab shell: empty pipeline stage."};
+  if(current.trim())segments.push(current.trim());
+  return {segments,error:null};
+}
+
+const pipelineFilters=new Set(["grep","egrep","head","tail","sort","wc"]);
+const regexEscape=value=>value.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+function lineLimit(args,fallback=10){const compact=args.find(arg=>/^-\d+$/.test(arg));if(compact)return Number(compact.slice(1));const at=args.indexOf("-n");return at>=0&&/^\d+$/.test(args[at+1]||"")?Number(args[at+1]):fallback;}
+function filterText(input,command,args=[]){
+  const text=String(input??""),lines=text===""?[]:text.split("\n");
+  if(command==="grep"||command==="egrep"){
+    const pattern=args.find(arg=>!arg.startsWith("-"));
+    if(pattern===undefined)return `Usage: ${command} [OPTION]... PATTERN`;
+    const options=args.filter(arg=>arg.startsWith("-")).join(""),insensitive=options.includes("i"),invert=options.includes("v"),fixed=options.includes("F");
+    let matcher;try{matcher=new RegExp(fixed?regexEscape(pattern):pattern,insensitive?"i":"");}catch{return `${command}: invalid regular expression`;}
+    return lines.filter(line=>matcher.test(line)!==invert).join("\n");
+  }
+  if(command==="head"||command==="tail"){
+    const count=lineLimit(args);return (command==="head"?lines.slice(0,count):lines.slice(-count)).join("\n");
+  }
+  if(command==="sort"){
+    const numeric=args.some(arg=>arg.includes("n")),human=args.some(arg=>arg.includes("h")),reverse=args.some(arg=>arg.includes("r"));
+    const number=value=>{const match=value.trim().match(/^([\d.]+)([KMGTP])?/i);if(!match)return Number.NaN;const scale={K:1e3,M:1e6,G:1e9,T:1e12,P:1e15};return Number(match[1])*(match[2]?scale[match[2].toUpperCase()]:1);};
+    lines.sort((a,b)=>{const result=numeric||human?number(a)-number(b):a.localeCompare(b);return Number.isNaN(result)?a.localeCompare(b):result;});if(reverse)lines.reverse();return lines.join("\n");
+  }
+  if(command==="wc"){
+    const countLines=lines.length,countWords=(text.match(/\S+/g)||[]).length,countBytes=new TextEncoder().encode(text).length,flags=args.filter(arg=>arg.startsWith("-")).join("");
+    const selected=[];if(flags.includes("l"))selected.push(countLines);if(flags.includes("w"))selected.push(countWords);if(flags.includes("c"))selected.push(countBytes);return (selected.length?selected:[countLines,countWords,countBytes]).join(" ");
+  }
+  return `Lab pipeline: '${command}' is not an allowlisted filter. Supported filters: grep, egrep, head, tail, sort, wc.`;
+}
+function runPipelineFilter(input,stage){const words=shellWords(stage),command=words[0];if(!pipelineFilters.has(command))return {error:`Lab pipeline: '${command||stage}' is not an allowlisted filter. Supported filters: grep, egrep, head, tail, sort, wc.`};return {output:filterText(input,command,words.slice(1))};}
+
 function clusterForHost(state,hostname){ return Object.entries(state.clusters).find(([,c])=>c.nodes.includes(hostname)); }
 function failover(state,clusterName,failed){
   const c=state.clusters[clusterName]; if(!c||c.owner!==failed) return;
@@ -85,7 +134,7 @@ export function setHostPower(state,hostname,action,source="terminal"){
   startHost();event(state,"info",`${hostname} virtual machine reboot completed.`);return `Domain ${hostname} rebooted`;
 }
 
-function help(){ return `Allowlisted simulated commands\n\nSystem: hostname hostnamectl whoami id pwd cd ls tree cat tail touch mkdir rmdir cp mv rm find grep date uptime free top ps df du mount lsblk uname rpm yum\nServices: systemctl journalctl dmesg firewall-cmd ip ping telnet dig ss nmcli bridge virsh\nAccess: ssh scp rsync sudo su exit logout\nHA: pcs crm corosync-cfgtool corosync-quorumtool drbdadm drbdsetup\nPlatforms: mysql mysqldump haproxy varnishadm rabbitmqctl nodetool curl showmount\n\nCommands change only browser-stored fictional lab state. Try: ssh root@mysql-core01` }
+function help(){ return `Allowlisted simulated commands\n\nSystem: hostname hostnamectl whoami id pwd cd ls tree cat tail touch mkdir rmdir cp mv rm find grep date uptime free top ps df du mount lsblk uname rpm yum\nFilters: grep egrep head tail sort wc (safe pipelines supported)\nServices: systemctl journalctl dmesg firewall-cmd ip ping telnet dig ss nmcli bridge virsh\nAccess: ssh scp rsync sudo su exit logout\nHA: pcs crm corosync-cfgtool corosync-quorumtool drbdadm drbdsetup\nPlatforms: mysql mysqldump haproxy varnishadm rabbitmqctl nodetool curl showmount\n\nCommands change only browser-stored fictional lab state. Try: ssh root@mysql-core01` }
 
 function listFiles(host,session,args){
   const target=args.find(a=>!a.startsWith("-"))||session.cwd, p=resolvePath(session,target);
@@ -103,11 +152,11 @@ function filesCommand(state,s,cmd,args,raw){ const host=h(state,s);
   if(cmd==="pwd") return s.cwd;
   if(cmd==="cd"){ const target=args[0]||`/home/${s.user}`,p=resolvePath(s,target);if(host.files[p]!==undefined&&!isVirtualDirectory(host,p))return `-bash: cd: ${target}: Not a directory`;if(!isVirtualDirectory(host,p))return `-bash: cd: ${target}: No such file or directory`;s.cwd=p; return ""; }
   if(cmd==="ls")return listFiles(host,s,args);if(cmd==="tree")return treeFiles(host,s,args);
-  if(["cat","less","head","tail"].includes(cmd)){
+  if(["cat","less","head","tail","sort","wc"].includes(cmd)){
     const path=resolvePath(s,args.filter(a=>!a.startsWith("-")&&a!=="f").at(-1)||""); let value=host.files[path];
     if(path==="/proc/drbd") value=drbdOutput(state,s);
     if(value===undefined) return `${cmd}: ${path}: No such file or directory`;
-    const arr=value.split("\n"); if(cmd==="head") return arr.slice(0,10).join("\n"); if(cmd==="tail") return arr.slice(-10).join("\n")+(args.includes("-f")?"\n-- follow mode simulated; press Ctrl+C to return --":""); return value;
+    if(cmd==="head"||cmd==="tail"||cmd==="sort"||cmd==="wc")return filterText(value,cmd,args)+(cmd==="tail"&&args.includes("-f")?"\n-- follow mode simulated; press Ctrl+C to return --":"");return value;
   }
   if(cmd==="touch"){const errors=[];for(const target of args.filter(a=>!a.startsWith("-"))){const p=resolvePath(s,target),parent=parentPath(p);if(!isVirtualDirectory(host,parent)){errors.push(`touch: cannot touch '${target}': No such file or directory`);continue;}if(!isVirtualDirectory(host,p))host.files[p]??="";}return errors.join("\n");}
   if(cmd==="mkdir"){const recursive=args.some(a=>a==="-p"||a==="--parents"),errors=[];for(const target of args.filter(a=>!a.startsWith("-"))){const p=resolvePath(s,target);if(virtualPathExists(host,p)){if(!recursive)errors.push(`mkdir: cannot create directory '${target}': File exists`);continue;}const parent=parentPath(p);if(!isVirtualDirectory(host,parent)&&!recursive){errors.push(`mkdir: cannot create directory '${target}': No such file or directory`);continue;}if(recursive){let cursor=p,chain=[];while(cursor!=="/"&&!isVirtualDirectory(host,cursor)){chain.unshift(cursor);cursor=parentPath(cursor);}host.directories.push(...chain);}else host.directories.push(p);host.directories=[...new Set(host.directories)].sort();event(state,"info",`${s.user} created directory ${p} on ${s.host}.`);}return errors.join("\n");}
@@ -122,7 +171,7 @@ function filesCommand(state,s,cmd,args,raw){ const host=h(state,s);
     return errors.join("\n");
   }
   if(cmd==="find"){ const base=resolvePath(s,args[0]||s.cwd),pattern=args[args.indexOf("-name")+1];if(!virtualPathExists(host,base))return `find: '${args[0]||s.cwd}': No such file or directory`;const matches=virtualPaths(host).filter(f=>f.startsWith(base)&&(!pattern||pattern==="core.*"&&basename(f).startsWith("core."))); return matches.join("\n"); }
-  if(cmd==="grep"){ const pattern=args.find(a=>!a.startsWith("-")),path=resolvePath(s,args.at(-1)),insensitive=args.some(a=>a.includes("i")),needle=insensitive?pattern?.toLowerCase():pattern; return (host.files[path]||"").split("\n").filter(l=>(insensitive?l.toLowerCase():l).includes(needle)).join("\n"); }
+  if(cmd==="grep"||cmd==="egrep"){const positional=args.filter(arg=>!arg.startsWith("-")),path=resolvePath(s,positional.at(-1)||"");if(positional.length<2||host.files[path]===undefined)return `${cmd}: ${positional.at(-1)||""}: No such file or directory`;return filterText(host.files[path],cmd,args.slice(0,-1));}
   if(cmd==="sed"){
     const path=resolvePath(s,args.at(-1));if(host.files[path]===undefined)return `sed: can't read ${path}: No such file or directory`;
     const expr=args.find(a=>a.includes("/d")||a.startsWith("s/"))||"";
@@ -180,7 +229,7 @@ function platformCommand(state,s,cmd,args,raw){ const host=h(state,s);
   if(cmd==="varnishadm")return "Status: running\nChild in state running";
   if(cmd==="rabbitmqctl")return args[0]==="list_queues"?"name\tmessages\nlab.events\t0\nlab.jobs\t12":`Cluster status of node rabbit@${s.host} ...\nDisk Nodes: [rabbit@rabbitmq01,rabbit@rabbitmq02,rabbit@rabbitmq03]\nRunning Nodes: ${state.rabbitOnline}\nPartitions: []`;
   if(cmd==="nodetool")return args[0]==="repair"?"Repair completed successfully":`Datacenter: ${host.dc}\nStatus=Up/Down | State=Normal\nUN  ${host.ip}  82.4 GB  256 tokens  rack1`;
-  if(cmd==="curl"){if(raw.includes("9200/_cluster/settings")&&/allocation[._]enable|allocation[^a-z]+enable/i.test(raw)&&/all/i.test(raw)){state.elasticAllocation="all";state.elastic="green";serviceLog(state,"elasticsearch02","elasticsearch","cluster.routing.allocation.enable set to all; unassigned primary shards allocated","notice");event(state,"info","Elasticsearch shard allocation restored; cluster is GREEN.");return '{"acknowledged":true,"persistent":{"cluster.routing.allocation.enable":"all"}}';}if(raw.includes("9200/_cluster/settings"))return JSON.stringify({persistent:{"cluster.routing.allocation.enable":state.elasticAllocation}},null,2);if(raw.includes("9200/_cluster/allocation/explain"))return JSON.stringify({index:"app-events-2026.08.02",shard:2,primary:true,current_state:"unassigned",unassigned_info:{reason:"ALLOCATION_FAILED"},allocate_explanation:state.elasticAllocation==="none"?"cannot allocate because cluster.routing.allocation.enable is [none]":"allocation is permitted"},null,2);if(raw.includes("9200/_cluster/health"))return JSON.stringify({cluster_name:"lab-search",status:state.elastic,number_of_nodes:6,active_primary_shards:state.elastic==="green"?24:21,unassigned_shards:state.elastic==="green"?0:3},null,2); if(raw.includes("9200/_cat/nodes"))return "ip heap.percent ram.percent cpu load_1m node.role master name\n10.10.62.21 24 62 3 0.12 cdfhilmrstw * elasticsearch01\n10.10.62.22 19 58 2 0.08 cdfhilmrstw - elasticsearch02"; return "HTTP/1.1 200 OK\nX-Lab-Simulation: true\n\nhealthy";}
+  if(cmd==="curl"){if(raw.includes("9200/_cluster/settings")&&/allocation[._]enable|allocation[^a-z]+enable/i.test(raw)&&/all/i.test(raw)){state.elasticAllocation="all";state.elastic="green";serviceLog(state,"elasticsearch02","elasticsearch","cluster.routing.allocation.enable set to all; unassigned primary shards allocated","notice");event(state,"info","Elasticsearch shard allocation restored; cluster is GREEN.");return '{"acknowledged":true,"persistent":{"cluster.routing.allocation.enable":"all"}}';}if(raw.includes("9200/_cluster/settings"))return JSON.stringify({persistent:{"cluster.routing.allocation.enable":state.elasticAllocation}},null,2);if(raw.includes("9200/_cluster/allocation/explain"))return JSON.stringify({index:"app-events-2026.08.02",shard:2,primary:true,current_state:"unassigned",unassigned_info:{reason:"ALLOCATION_FAILED"},allocate_explanation:state.elasticAllocation==="none"?"cannot allocate because cluster.routing.allocation.enable is [none]":"allocation is permitted"},null,2);if(raw.includes("9200/_cluster/health"))return JSON.stringify({cluster_name:"lab-search",status:state.elastic,number_of_nodes:3,active_primary_shards:state.elastic==="green"?24:21,unassigned_shards:state.elastic==="green"?0:3},null,2); if(raw.includes("9200/_cat/nodes"))return "ip heap.percent ram.percent cpu load_1m node.role master name\n10.10.62.21 24 62 3 0.12 cdfhilmrstw * elasticsearch01\n10.10.62.22 19 58 2 0.08 cdfhilmrstw - elasticsearch02\n10.10.62.23 21 60 2 0.10 cdfhilmrstw - elasticsearch03"; return "HTTP/1.1 200 OK\nX-Lab-Simulation: true\n\nhealthy";}
   if(cmd==="showmount")return "Export list for san-vip:\n/exports/app 10.10.0.0/16\n/exports/backups 10.10.0.0/16";
   return null;
 }
@@ -240,7 +289,19 @@ function domainXml(name,vm){return `<domain type='kvm'>\n  <name>${name}</name>\
 
 function systemInfo(state,s,cmd,args){const host=h(state,s); switch(cmd){case"hostname":return s.host;case"hostnamectl":return `Static hostname: ${s.host}\nOperating System: CentOS Linux 8 (Lab)\nKernel: Linux 4.18.0-477.el8.x86_64\nArchitecture: x86-64`;case"whoami":return s.user;case"id":{const u=args[0]||s.user,rec=host.users[u];return rec?`uid=${rec.uid}(${u}) gid=${rec.uid}(${u}) groups=${rec.uid}(${rec.groups})`:`id: '${u}': no such user`;}case"date":return state.time+" IST";case"uptime":return ` 10:18:42 up ${host.uptime},  2 users,  load average: ${host.load}`;case"free":return "              total        used        free      shared  buff/cache   available\nMem:          15984        5212        7041         412        3731       10120\nSwap:          4095           0        4095";case"df":return `Filesystem                  Size  Used Avail Use% Mounted on\n/dev/mapper/lab-root          80G   ${Math.round(host.disk*.8)}G  ${Math.round(80-host.disk*.8)}G  ${host.disk}% /\n/dev/drbd0                   500G  305G  195G  ${host.disk}% /exports/app`;case"du":return duCommand(host,s,args);case"uname":return "Linux "+s.host+" 4.18.0-477.el8.x86_64 #1 SMP x86_64 GNU/Linux";case"ps":return `USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND\nroot 1 0.0 0.1 193732 9100 ? Ss Jul29 0:08 /usr/lib/systemd/systemd\nmysql 2210 0.4 8.1 2751032 637120 ? Ssl 10:12 3:42 /usr/sbin/mysqld\nroot 944 0.0 0.1 112932 7252 ? Ss Jul29 0:01 /usr/sbin/sshd -D`;case"top":return `top - 10:18:42 up ${host.uptime}, 2 users, load average: ${host.load}\nTasks: 147 total, 1 running, 146 sleeping\n%Cpu(s): 2.1 us, 0.7 sy, 97.2 id\nMiB Mem : 15984 total, 7041 free`;case"lsblk":return "NAME MAJ:MIN RM SIZE RO TYPE MOUNTPOINT\nsda 8:0 0 100G 0 disk\n├─sda1 8:1 0 1G 0 part /boot\n└─sda2 8:2 0 99G 0 part\n  └─lab-root 253:0 0 80G 0 lvm /\ndrbd0 147:0 0 500G 0 disk /exports/app";case"blkid":return '/dev/sda1: UUID="LAB-BOOT" TYPE="xfs"\n/dev/mapper/lab-root: UUID="LAB-ROOT" TYPE="xfs"';case"mount":return host.mounts.join("\n");case"rpm":return host.packages.join("\n");case"getenforce":return host.selinux||"Enforcing";case"dmesg":return `[    0.000000] Linux version 4.18.0-477.el8.x86_64\n[    2.154201] ${s.host} kernel: lab network interfaces initialized\n[    4.911250] XFS (dm-0): Ending clean mount`;default:return null;}}
 
-export function execute(state,s,raw){ const input=raw.trim(); if(!input)return "";const connectedHost=h(state,s);if(connectedHost&&!connectedHost.online){const disconnected=s.host,previous=s.stack.pop();s.mysql=false;if(previous)Object.assign(s,previous);else Object.assign(s,{host:"bastion01",user:"labadmin",cwd:"/home/labadmin"});return `Connection to ${disconnected} lost: virtual machine is not running.`;} if(s.mysql)return guardedMysqlShell(state,s,input); const safeHistory=input.replace(/(--password(?:=|\s+))\S+/gi,"$1[REDACTED]");s.history.push(safeHistory); h(state,s).history.push(safeHistory);
+export function execute(state,s,raw){
+  const input=raw.trim();if(!input)return "";const connectedHost=h(state,s);
+  if(connectedHost&&!connectedHost.online){const disconnected=s.host,previous=s.stack.pop();s.mysql=false;if(previous)Object.assign(s,previous);else Object.assign(s,{host:"bastion01",user:"labadmin",cwd:"/home/labadmin"});return `Connection to ${disconnected} lost: virtual machine is not running.`;}
+  if(s.mysql)return guardedMysqlShell(state,s,input);
+  const safeHistory=input.replace(/(--password(?:=|\s+))\S+/gi,"$1[REDACTED]");s.history.push(safeHistory);h(state,s).history.push(safeHistory);
+  const pipeline=splitPipeline(input);if(pipeline.error)return pipeline.error;
+  const [first,...filters]=pipeline.segments;let output=executeSingle(state,s,first);
+  if(!filters.length)return output;if(typeof output!=="string")return "Lab pipeline: this command does not produce text that can be filtered.";
+  for(const stage of filters){const result=runPipelineFilter(output,stage);if(result.error)return result.error;output=result.output;}
+  return output;
+}
+
+function executeSingle(state,s,input){
   const words=shellWords(input),cmd=words[0],args=words.slice(1);
   if(cmd==="clear")return {clear:true}; if(cmd==="help")return help(); if(cmd==="history")return s.history.map((x,i)=>`${String(i+1).padStart(4)}  ${x}`).join("\n");
   if(cmd==="ssh"){const target=args.filter(a=>a!=="-p"&&!/^\d+$/.test(a)).at(-1)||"",[userPart,hostPart]=target.includes("@")?target.split("@"): ["labadmin",target],dest=aliases[hostPart]||hostPart;if(!state.hosts[dest])return `ssh: Could not resolve hostname ${hostPart}: Name or service not known`;if(!state.hosts[dest].online)return `ssh: connect to host ${hostPart} port 22: No route to host`;s.stack.push({host:s.host,user:s.user,cwd:s.cwd});s.host=dest;s.user=userPart;s.cwd=userPart==="root"?"/root":`/home/${userPart}`;return `Last login: Sat Aug  1 10:10:01 2026 from 10.10.0.10\nWelcome to ${dest} — fictional HA lab node.`;}

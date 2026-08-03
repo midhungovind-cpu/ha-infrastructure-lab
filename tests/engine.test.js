@@ -241,6 +241,27 @@ test("firewall-cmd rejects two commands entered without a shell separator",()=>{
   assert.match(execute(state,session,"firewall-cmd --list-ports"),/7789\/tcp/);
 });
 
+test("safe pipelines filter command output without false positives",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@mysql-core01");
+  const matching=execute(state,session,"ip a | grep 10.10.20.10");
+  assert.match(matching,/10\.10\.20\.10\/24/);
+  assert.equal(execute(state,session,"ip a | grep NOMATCHXYZ"),"");
+  assert.match(execute(state,session,"cat /etc/hosts | grep db-vip"),/db-vip\.lab\.internal/);
+  assert.equal(session.history.at(-1),"cat /etc/hosts | grep db-vip");
+});
+
+test("pipelines allow only read-only filters and support wc and sort",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@mysql-core01");
+  assert.match(execute(state,session,"ip a | grep inet | wc -l"),/^\d+$/);
+  assert.match(execute(state,session,"cat /etc/hosts | grep . | sort | tail -n 1"),/127\.0\.0\.1/);
+  assert.match(execute(state,session,"ip a | systemctl stop mariadb"),/not an allowlisted filter/);
+  assert.equal(state.hosts["mysql-core01"].services.mariadb,"active (running)");
+  assert.match(execute(state,session,"grep 'db-vip|san-vip' /etc/hosts"),/db-vip/);
+  assert.match(execute(state,session,"wc -l /etc/hosts"),/^\d+$/);
+});
+
 test("DRBD split-brain requires victim selection and discard resync sequence",()=>{
   const state=createInitialState(),session=newSession();injectScenario(state,6);execute(state,session,"ssh root@mysql-core01");
   assert.match(execute(state,session,"drbdadm connect r0"),/Need access to UpToDate data/);
@@ -258,6 +279,17 @@ test("Elasticsearch restart does not repair disabled shard allocation",()=>{
   assert.match(execute(state,session,"curl -s localhost:9200/_cluster/settings?pretty"),/none/);
   execute(state,session,"curl -X PUT localhost:9200/_cluster/settings -d '{\"persistent\":{\"cluster.routing.allocation.enable\":\"all\"}}'");
   assert.equal(state.elastic,"green");
+});
+
+test("Elasticsearch health and cat output describe one three-node site cluster",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@elasticsearch01");
+  const health=JSON.parse(execute(state,session,"curl -s localhost:9200/_cluster/health?pretty"));
+  assert.equal(health.number_of_nodes,3);
+  const nodes=execute(state,session,"curl -s localhost:9200/_cat/nodes");
+  assert.match(nodes,/elasticsearch01/);
+  assert.match(nodes,/elasticsearch02/);
+  assert.match(nodes,/elasticsearch03/);
 });
 
 test("systemctl rejects units that do not exist on the selected host",()=>{

@@ -18,10 +18,12 @@ The recurring theme across the drills is deliberate — **the process is running
 
 ## Quick start
 
+Requires Node.js 18 or newer.
+
 ```bash
 git clone https://github.com/midhungovind-cpu/ha-infrastructure-lab.git
 cd ha-infrastructure-lab
-npm start          # serves on http://localhost:4173
+npm start          # serves on http://127.0.0.1:4173
 ```
 
 Or open `index.html` directly in a modern browser — there is no build step.
@@ -98,7 +100,7 @@ lab-images/        illustrative fictional seed configuration files
 tests/             engine unit tests (node --test)
 ```
 
-The engine favours consistent operational behaviour over emulating every shell feature. Unsupported commands return a CentOS-style message rather than pretending to work.
+The engine favours consistent operational behaviour over emulating every shell feature. Safe pipelines support `grep`, `egrep`, `head`, `tail`, `sort` and `wc`; unsupported commands return an explicit lab message rather than pretending to work.
 
 ## Disclaimer
 
