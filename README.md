@@ -2,7 +2,7 @@
 
 A browser-based high-availability training simulator. It models a two–data-centre Linux estate — HAProxy/keepalived at the edge, Pacemaker + Corosync + DRBD under the database and storage tiers, GTID replication out to a read tier, KVM/libvirt underneath — and lets you break it and fix it from an allowlisted Linux-style terminal.
 
-**[▶ Live demo](https://midhungovind-cpu.github.io/ha-infrastructure-lab/)** · **[Architecture &amp; reference configs](ARCHITECTURE.md)**
+**[▶ Live demo](https://midhungovind-cpu.github.io/ha-infrastructure-lab/)** · **[Architecture reference](ARCHITECTURE.md)**
 
 Everything runs locally in the browser. There are no external connections, nothing is executed on the host, and all hostnames, addresses, credentials and configuration files are fictional.
 
@@ -49,7 +49,7 @@ State persists across reconnects and page reloads. The **Exercises** tab injects
 | --- | --- | --- |
 | Edge | haproxy01/02 | HAProxy L7 + keepalived VRRP, VIP 10.10.10.10 |
 | Cache | varnish01/02 | Varnish with health probes and grace mode |
-| Web | web01–03 | Nginx + PHP-FPM; one Apache/cPanel node |
+| Web | web01–03 | `web01/02`: Nginx + PHP-FPM; `web03`: Lighttpd + PHP-FPM |
 | Database | mysql-core01/02, mysql-slave01 | Pacemaker + DRBD protocol C, VIP 10.10.20.10, GTID replication |
 | Storage | san01/02 | DRBD + NFSv4 under Pacemaker, VIP 10.10.30.10 |
 | Transfer | ftp01/02 | Pure-FTPd, TLS required, passive range |
@@ -57,7 +57,7 @@ State persists across reconnects and page reloads. The **Exercises** tab injects
 | Virtualisation | kvm01/02 | libvirt, bridged networking, LVM-backed guests |
 | Recovery site | `dr-` mirror of the above on 10.20.0.0/16 | Warm; promoted by declaration, never automatically |
 
-Full addressing, VLAN plan, VIP ownership table and the reference configuration for every tier are in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+The modelled topology, ownership rules, recovery flow and exercise coverage are in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ![Conceptual HA reference architecture](docs/architecture.png)
 
