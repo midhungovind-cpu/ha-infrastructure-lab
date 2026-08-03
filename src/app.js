@@ -1,6 +1,6 @@
-import { loadState, saveState, resetState, createInitialState, event } from "./state.js?v=20260802.16";
-import { newSession, prompt as terminalPrompt, execute, completions, injectScenario, saveEditedFile, setHostPower } from "./engine.js?v=20260802.18";
-import { scenarios, assessScenario } from "./scenarios.js?v=20260802.15";
+import { loadState, saveState, resetState, createInitialState, event } from "./state.js?v=20260803.19";
+import { newSession, prompt as terminalPrompt, execute, completions, injectScenario, saveEditedFile, setHostPower } from "./engine.js?v=20260803.19";
+import { scenarios, assessScenario } from "./scenarios.js?v=20260803.19";
 
 let state=loadState(), sessions=[newSession(1)], activeSession=1, editorContext=null;
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];

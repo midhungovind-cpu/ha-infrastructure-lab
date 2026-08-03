@@ -1,4 +1,4 @@
-import { aliases, event } from "./state.js?v=20260802.16";
+import { aliases, event } from "./state.js?v=20260803.19";
 
 const knownCommands = ["help","hostname","hostnamectl","whoami","id","getent","pwd","cd","ls","tree","cat","less","head","tail","sort","wc","touch","mkdir","rmdir","cp","mv","rm","ln","find","grep","egrep","sed","awk","vi","vim","nano","date","uptime","free","top","ps","kill","df","du","mount","umount","lsblk","blkid","lsof","uname","rpm","yum","systemctl","journalctl","dmesg","firewall-cmd","getenforce","setenforce","ip","ping","telnet","traceroute","dig","nslookup","ss","netstat","curl","wget","nmcli","bridge","brctl","virsh","ssh","scp","rsync","sudo","su","reboot","shutdown","pcs","crm","corosync-cfgtool","corosync-quorumtool","drbdadm","drbdsetup","mysql","mysqldump","showmount","haproxy","varnishadm","rabbitmqctl","nodetool","pure-pw","history","exit","logout","clear"];
 
@@ -50,9 +50,65 @@ function duCommand(host,session,args){
   if(options.some(option=>option.includes("c"))&&rows.some(row=>!row.startsWith("du:")))rows.push(`${humanBytes(total)}\ttotal`);
   return rows.join("\n");
 }
+function dfCommand(host){
+  const rows=[["/dev/mapper/lab-root",80,host.disk,"/"]];
+  if("drbd" in host.services){
+    const mountpoint=/^(dr-)?san\d{2}$/.test(host.hostname)?"/exports/app":"/var/lib/mysql";
+    rows.push(["/dev/drbd0",500,host.dataDisk??61,mountpoint]);
+  }
+  const table=[["Filesystem","Size","Used","Avail","Use%","Mounted on"]];
+  for(const [device,size,percent,mountpoint] of rows){
+    const used=Math.round(size*percent/100);
+    table.push([device,`${size}G`,`${used}G`,`${size-used}G`,`${percent}%`,mountpoint]);
+  }
+  const widths=table[0].map((_,column)=>Math.max(...table.map(row=>row[column].length)));
+  return table.map(row=>row.map((cell,column)=>column===0||column===5?cell.padEnd(column===5?0:widths[column]):cell.padStart(widths[column])).join("  ").trimEnd()).join("\n");
+}
 const logPathFor=(hostname,service)=>({haproxy:"/var/log/haproxy.log",mariadb:"/var/log/mariadb/mariadb.log",mysql:"/var/log/mariadb/mariadb.log",drbd:"/var/log/drbd.log",pacemaker:"/var/log/pacemaker/pacemaker.log",corosync:"/var/log/cluster/corosync.log","nfs-server":"/var/log/nfs.log",nfs_server:"/var/log/nfs.log","pure-ftpd":"/var/log/pureftpd.log",NetworkManager:"/var/log/messages","rabbitmq-server":`/var/log/rabbitmq/rabbit@${hostname}.log`,cassandra:"/var/log/cassandra/system.log",elasticsearch:"/var/log/elasticsearch/lab-search.log",libvirtd:"/var/log/libvirt/libvirtd.log"}[service]||"/var/log/messages");
 function appendLog(state,hostname,path,message){const host=state.hosts[hostname];if(!host)return;host.files[path]=(host.files[path]||"")+message.replace(/\n?$/,"\n");}
 function serviceLog(state,hostname,service,message,level="error"){const upper=level.toUpperCase();appendLog(state,hostname,"/var/log/messages",`Aug 02 09:18:42 ${hostname} ${service}[${service==="pacemaker"?1402:3210}]: ${upper}: ${message}`);const path=logPathFor(hostname,service);if(path!=="/var/log/messages")appendLog(state,hostname,path,`Aug 02 09:18:42 ${hostname} ${service}[3210]: ${upper}: ${message}`);}
+
+const SERVICE_PROCESS={haproxy:["root","/usr/sbin/haproxy -Ws -f /etc/haproxy/haproxy.cfg -p /run/haproxy.pid"],keepalived:["root","/usr/sbin/keepalived -D"],mariadb:["mysql","/usr/libexec/mysqld --basedir=/usr"],pacemaker:["root","/usr/sbin/pacemakerd"],corosync:["root","/usr/sbin/corosync -f"],drbd:["root","[drbd_w_r0]"],"nfs-server":["root","/usr/sbin/rpc.nfsd"],nginx:["root","nginx: master process /usr/sbin/nginx"],"php-fpm":["root","php-fpm: master process (/etc/php-fpm.conf)"],varnish:["varnish","/usr/sbin/varnishd -a :80 -f /etc/varnish/default.vcl"],"pure-ftpd":["root","pure-ftpd (SERVER)"],"rabbitmq-server":["rabbitmq","/usr/lib64/erlang/erts/bin/beam.smp -W w -K true"],cassandra:["cassandra","/usr/bin/java -Dcassandra -cp /etc/cassandra"],elasticsearch:["elastic","/usr/share/elasticsearch/jdk/bin/java -Xms4g -Xmx4g"],libvirtd:["root","/usr/sbin/libvirtd --timeout 120"],NetworkManager:["root","/usr/sbin/NetworkManager --no-daemon"],chronyd:["chrony","/usr/sbin/chronyd"],rsyslog:["root","/usr/sbin/rsyslogd -n"]};
+const SERVICE_DESCRIPTION={haproxy:"HAProxy Load Balancer",keepalived:"LVS and VRRP High Availability Monitor",mariadb:"MariaDB 10.5 database server",pacemaker:"Pacemaker High Availability Cluster Manager",corosync:"Corosync Cluster Engine",drbd:"DRBD Replicated Block Device","nfs-server":"NFS server and services",nginx:"The nginx HTTP and reverse proxy server","php-fpm":"The PHP FastCGI Process Manager",varnish:"Varnish Cache, a high-performance HTTP accelerator","pure-ftpd":"Pure-FTPd FTP server","rabbitmq-server":"RabbitMQ broker",cassandra:"Apache Cassandra",elasticsearch:"Elasticsearch",libvirtd:"Virtualization daemon",NetworkManager:"Network Manager",chronyd:"NTP client/server",rsyslog:"System Logging Service"};
+const serviceDescription=name=>SERVICE_DESCRIPTION[name]||`${name} service`;
+const serviceProcess=name=>SERVICE_PROCESS[name]||["root",`/usr/sbin/${name}`];
+function stableId(seed,min,max){let hash=2166136261;for(let i=0;i<seed.length;i++){hash^=seed.charCodeAt(i);hash=Math.imul(hash,16777619);}return min+(Math.abs(hash)%(max-min));}
+const servicePid=(hostname,service)=>stableId(`${hostname}/${service}`,1200,28000);
+const SYSTEMD_DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function formatSystemdTime(date=new Date()){const pad=value=>String(value).padStart(2,"0");return `${SYSTEMD_DAYS[date.getDay()]} ${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} IST`;}
+const DEFAULT_SERVICE_SINCE="Sat 2026-08-01 10:12:03 IST";
+function serviceMeta(host,name){host.serviceMeta??={};host.serviceMeta[name]??={pid:servicePid(host.hostname,name),since:DEFAULT_SERVICE_SINCE};return host.serviceMeta[name];}
+function markServiceStarted(host,name){const meta=serviceMeta(host,name);meta.pid=servicePid(host.hostname,name);meta.since=formatSystemdTime();return meta;}
+function markServiceStopped(host,name){const meta=serviceMeta(host,name);meta.pid=null;meta.since=formatSystemdTime();return meta;}
+const clusterManagedService={database:"mariadb",storage:"nfs-server"};
+function reconcileStrayResource(state,hostname,name){
+  const entry=Object.entries(state.clusters).find(([clusterName,cluster])=>clusterManagedService[clusterName]===name&&cluster.nodes.includes(hostname));
+  if(!entry)return null;
+  const [clusterName,cluster]=entry;
+  if(!cluster.owner||cluster.owner===hostname||!state.hosts[cluster.owner]?.online)return null;
+  const host=state.hosts[hostname];
+  host.services[name]="inactive (dead)";markServiceStopped(host,name);
+  cluster.failures=(cluster.failures||0)+1;cluster.lastFailedNode=hostname;
+  serviceLog(state,hostname,name,`${name}.service stopped: resource is managed by ${clusterName}-group, currently owned by ${cluster.owner}`,"warning");
+  serviceLog(state,hostname,"pacemaker",`unmanaged ${name} instance detected on ${hostname} while ${cluster.owner} owns ${clusterName}-group; stopping stray instance`,"warning");
+  event(state,"warning",`${name} was started by hand on ${hostname}; Pacemaker stopped it because ${cluster.owner} owns ${clusterName}-group.`);
+  return `Job for ${name}.service started, then the cluster stopped it.\n${clusterName}-group is owned by ${cluster.owner}; a second instance on shared storage is refused.\nUse 'pcs resource move ${clusterName}-group ${hostname}' to relocate the resource, then 'pcs resource cleanup' to clear the failed action.`;
+}
+function psCommand(state,s){
+  const host=h(state,s);
+  const rows=[["root",1,"0.0","0.1","193732","9100","?","Ss","Jul29","0:08","/usr/lib/systemd/systemd"]];
+  for(const [name,value] of Object.entries(host.services)){
+    if(!isActive(value))continue;
+    const meta=serviceMeta(host,name),[user,command]=serviceProcess(name);
+    rows.push([user,meta.pid??servicePid(host.hostname,name),"0.3","2.1","912344","84120","?","Ssl",meta.since===DEFAULT_SERVICE_SINCE?"10:12":"10:18","0:14",command]);
+  }
+  rows.push(["root",944,"0.0","0.1","112932","7252","?","Ss","Jul29","0:01","/usr/sbin/sshd -D"]);
+  rows.sort((a,b)=>a[1]-b[1]);
+  const header=["USER","PID","%CPU","%MEM","VSZ","RSS","TTY","STAT","START","TIME","COMMAND"];
+  const widths=header.map((label,column)=>Math.max(label.length,...rows.map(row=>String(row[column]).length)));
+  const render=cells=>cells.map((cell,column)=>column===0?String(cell).padEnd(widths[column]):column===10?String(cell):String(cell).padStart(widths[column])).join(" ").trimEnd();
+  return [render(header),...rows.map(render)].join("\n");
+}
 
 function shellWords(raw) {
   const out=[]; let cur="", quote="";
@@ -85,7 +141,7 @@ const pipelineFilters=new Set(["grep","egrep","head","tail","sort","wc"]);
 const regexEscape=value=>value.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
 function lineLimit(args,fallback=10){const compact=args.find(arg=>/^-\d+$/.test(arg));if(compact)return Number(compact.slice(1));const at=args.indexOf("-n");return at>=0&&/^\d+$/.test(args[at+1]||"")?Number(args[at+1]):fallback;}
 function filterText(input,command,args=[]){
-  const text=String(input??""),lines=text===""?[]:text.split("\n");
+  const text=String(input??"");const rawLines=text===""?[]:text.split("\n");const lines=rawLines.length&&rawLines.at(-1)===""?rawLines.slice(0,-1):rawLines;
   if(command==="grep"||command==="egrep"){
     const pattern=args.find(arg=>!arg.startsWith("-"));
     if(pattern===undefined)return `Usage: ${command} [OPTION]... PATTERN`;
@@ -186,20 +242,22 @@ function filesCommand(state,s,cmd,args,raw){ const host=h(state,s);
 
 function serviceCommand(state,s,args){ const host=h(state,s),action=args[0]||"status",name=canonicalService((args[1]||"").replace(".service","")); if(!name)return "systemctl: missing service name";
   if(!(name in host.services))return `Unit ${name}.service could not be found.`;
-  if(action==="status") { const st=serviceState(host,name); return `● ${name}.service - ${name} service\n   Loaded: loaded (/usr/lib/systemd/system/${name}.service; enabled)\n   Active: ${st} since Sat 2026-08-01 10:12:03 IST\n Main PID: ${isActive(st)?2210:"-"} (${name})\n   CGroup: /system.slice/${name}.service`; }
+  if(action==="status") { const st=serviceState(host,name),meta=serviceMeta(host,name),running=isActive(st),[,command]=serviceProcess(name);
+    return lines(`● ${name}.service - ${serviceDescription(name)}`,`   Loaded: loaded (/usr/lib/systemd/system/${name}.service; enabled; vendor preset: disabled)`,`   Active: ${st} since ${meta.since}`,running?` Main PID: ${meta.pid} (${name})`:undefined,running?"   Tasks: 7 (limit: 49152)":undefined,`   CGroup: /system.slice/${name}.service`,running?`           └─${meta.pid} ${command}`:undefined); }
   if(["start","restart"].includes(action)){
     if(name==="haproxy" && (host.files["/etc/haproxy/haproxy.cfg"]||"").includes("INVALID")){serviceLog(state,s.host,"haproxy","configuration validation failed; service not started","alert");return `Job for haproxy.service failed. Run 'haproxy -c -f /etc/haproxy/haproxy.cfg' for details.`;}
-    if(name==="haproxy"&&host.files["/run/haproxy.pid"]!==undefined){host.services[name]="failed";serviceLog(state,s.host,"haproxy","startup aborted: pidfile /run/haproxy.pid exists but process 2188 is not running","alert");return "Job for haproxy.service failed because the control process exited with error code.\nSee 'journalctl -u haproxy' for details.";}
-    if(name==="rabbitmq-server"&&host.files["/var/lib/rabbitmq/.erlang.cookie"]!==host.files["/etc/rabbitmq/lab.erlang.cookie"]){host.services[name]="failed";serviceLog(state,s.host,name,"BOOT FAILED: invalid challenge reply; Erlang cookie does not match cluster cookie","error");return "Job for rabbitmq-server.service failed: BOOT FAILED (invalid challenge reply).";}
-    if(name==="cassandra"){const config=host.files["/etc/cassandra/cassandra.yaml"]||"";if(!config.includes(`listen_address: ${host.ip}`)){host.services[name]="failed";serviceLog(state,s.host,name,`ConfigurationException: listen_address resolves to an invalid local address; expected ${host.ip}`,"error");return "Job for cassandra.service failed: ConfigurationException in /etc/cassandra/cassandra.yaml.";}}
-    if(name==="pure-ftpd"){const validCert=host.files["/etc/pki/tls/certs/lab-ftp.pem"]===host.files["/etc/pki/tls/certs/lab-ftp-renewed.pem"];if(!validCert){state.ftp.tlsValid=false;host.services[name]="failed";serviceLog(state,s.host,name,"TLS context initialization failed: certificate has expired","error");return "Job for pure-ftpd.service failed: TLS certificate has expired.";}if(!state.ftp.passiveOpen){host.services[name]="failed";serviceLog(state,s.host,name,"passive port range 30000-31000 is blocked by firewalld","error");return "Job for pure-ftpd.service failed: passive port range is unavailable.";}state.ftp.tlsValid=true;}
-    host.services[name]="active (running)";
+    if(name==="haproxy"&&host.files["/run/haproxy.pid"]!==undefined){host.services[name]="failed";markServiceStopped(host,name);serviceLog(state,s.host,"haproxy","startup aborted: pidfile /run/haproxy.pid exists but process 2188 is not running","alert");return "Job for haproxy.service failed because the control process exited with error code.\nSee 'journalctl -u haproxy' for details.";}
+    if(name==="rabbitmq-server"&&host.files["/var/lib/rabbitmq/.erlang.cookie"]!==host.files["/etc/rabbitmq/lab.erlang.cookie"]){host.services[name]="failed";markServiceStopped(host,name);serviceLog(state,s.host,name,"BOOT FAILED: invalid challenge reply; Erlang cookie does not match cluster cookie","error");return "Job for rabbitmq-server.service failed: BOOT FAILED (invalid challenge reply).";}
+    if(name==="cassandra"){const config=host.files["/etc/cassandra/cassandra.yaml"]||"";if(!config.includes(`listen_address: ${host.ip}`)){host.services[name]="failed";markServiceStopped(host,name);serviceLog(state,s.host,name,`ConfigurationException: listen_address resolves to an invalid local address; expected ${host.ip}`,"error");return "Job for cassandra.service failed: ConfigurationException in /etc/cassandra/cassandra.yaml.";}}
+    if(name==="pure-ftpd"){const validCert=host.files["/etc/pki/tls/certs/lab-ftp.pem"]===host.files["/etc/pki/tls/certs/lab-ftp-renewed.pem"];if(!validCert){state.ftp.tlsValid=false;host.services[name]="failed";markServiceStopped(host,name);serviceLog(state,s.host,name,"TLS context initialization failed: certificate has expired","error");return "Job for pure-ftpd.service failed: TLS certificate has expired.";}if(!state.ftp.passiveOpen){host.services[name]="failed";markServiceStopped(host,name);serviceLog(state,s.host,name,"passive port range 30000-31000 is blocked by firewalld","error");return "Job for pure-ftpd.service failed: passive port range is unavailable.";}state.ftp.tlsValid=true;}
+    host.services[name]="active (running)";markServiceStarted(host,name);
     if(name==="rabbitmq-server"&&s.host.includes("rabbitmq")){host.online=true;state.rabbitOnline=[1,2,3].filter(n=>activeServiceForEngine(state,`rabbitmq0${n}`,"rabbitmq-server")).length;}
     if(name==="cassandra"&&s.host.includes("cassandra")){host.online=true;state.cassandraOnline=[1,2,3].filter(n=>activeServiceForEngine(state,`cassandra0${n}`,"cassandra")).length;}
     if(name==="elasticsearch"&&s.host.includes("elasticsearch")){host.online=true;state.elastic=state.elasticAllocation==="none"?"red":[1,2,3].every(n=>activeServiceForEngine(state,`elasticsearch0${n}`,"elasticsearch"))?"green":"yellow";}
-    serviceLog(state,s.host,name,`${action==="restart"?"Restarted":"Started"} ${name}.service successfully`,"notice"); event(state,"info",`${name} ${action}ed on ${s.host}.`); return "";
+    serviceLog(state,s.host,name,`${action==="restart"?"Restarted":"Started"} ${name}.service successfully`,"notice"); event(state,"info",`${name} ${action}ed on ${s.host}.`);
+    const stray=reconcileStrayResource(state,s.host,name); if(stray)return stray; return "";
   }
-  if(action==="stop") { host.services[name]="inactive (dead)";serviceLog(state,s.host,name,`${name}.service entered inactive state by operator request`,"warning"); event(state,"warning",`${name} stopped on ${s.host}.`); if(name==="mariadb"&&state.clusters.database.owner===s.host)failover(state,"database",s.host); if(name==="nfs-server"&&state.clusters.storage.owner===s.host)failover(state,"storage",s.host); if(name==="haproxy"&&state.clusters.haproxy.owner===s.host)failover(state,"haproxy",s.host); return ""; }
+  if(action==="stop") { host.services[name]="inactive (dead)";markServiceStopped(host,name);serviceLog(state,s.host,name,`${name}.service entered inactive state by operator request`,"warning"); event(state,"warning",`${name} stopped on ${s.host}.`); if(name==="mariadb"&&state.clusters.database.owner===s.host)failover(state,"database",s.host); if(name==="nfs-server"&&state.clusters.storage.owner===s.host)failover(state,"storage",s.host); if(name==="haproxy"&&state.clusters.haproxy.owner===s.host)failover(state,"haproxy",s.host); return ""; }
   if(action==="enable"||action==="disable") return `Created symlink /etc/systemd/system/multi-user.target.wants/${name}.service → /usr/lib/systemd/system/${name}.service.`;
   return `Unknown operation ${action}.`;
 }
@@ -215,7 +273,7 @@ function pcsCommand(state,s,rawArgs){const args=normalizePcsArgs(rawArgs),sub=ar
 }if(sub==="resource"){
   const action=args[1];if(action==="cleanup"){const resource=args[2],entries=resource?[clusterResourceEntry(state,resource)].filter(Boolean):Object.entries(state.clusters);if(resource&&!entries.length)return `Error: resource '${resource}' not found`;entries.forEach(([,cluster])=>{cluster.failures=0;delete cluster.lastFailedNode;});event(state,"info",`Resource failures cleaned up by ${s.user}.`);return resource?`Cleaned up ${resource} on all nodes.`:"Cleaned up all resources.";}
   if(action==="move"){const resource=args[2],nodeAt=args.indexOf("--node"),nodeEquals=args.find(a=>a.startsWith("--node=")),target=nodeAt>=0?args[nodeAt+1]:nodeEquals?.split("=")[1]||args[3];return moveClusterResource(state,s,resource,target);}
-  if(action==="clear"||action==="unmove"){const entry=clusterResourceEntry(state,args[2]);if(!entry)return `Error: resource '${args[2]}' not found`;delete entry[1].moveConstraint;event(state,"info",`Temporary move constraint cleared for ${args[2]}.`);return `Removing constraint created by pcs resource move ${args[2]}`;}
+  if(action==="clear"||action==="unmove"){const entry=clusterResourceEntry(state,args[2]);if(!entry)return `Error: resource '${args[2]}' not found`;if(!entry[1].moveConstraint)return `No move constraint exists for '${args[2]}'.`;delete entry[1].moveConstraint;event(state,"info",`Temporary move constraint cleared for ${args[2]}.`);return `Removing constraint created by pcs resource move ${args[2]}`;}
   return pcsStatus(state,s);
 }if(sub==="node")return Object.values(state.clusters).flatMap(c=>c.nodes).map(n=>`${n}: ${state.hosts[n].online?"Online":"Offline"}`).join("\n");if(sub==="property")return "stonith-enabled: true\nno-quorum-policy: stop\nresource-stickiness: 100";if(sub==="constraint"){const moves=Object.entries(state.clusters).filter(([,c])=>c.moveConstraint).map(([name,c])=>`  ${c.moveConstraint.resource} prefers ${c.moveConstraint.target}=INFINITY`).join("\n");return `Location Constraints:\n${moves||"  No temporary location constraints"}\nOrdering Constraints:\n  promote drbd then start vip\nColocation Constraints:\n  vip with drbd-master INFINITY`;}return pcsStatus(state,s);}
 function drbdOutput(state,s){ const entry=clusterForHost(state,s.host),c=entry?.[1]||state.clusters.database; return `r0 role:${c.roles?.split("/")[c.nodes.indexOf(s.host)]||"Secondary"}\n  disk:UpToDate\n  peer role:${c.roles?.split("/")[1-c.nodes.indexOf(s.host)]||"Primary"}\n    replication:${c.drbd||"Connected"} peer-disk:UpToDate done:100.00`; }
@@ -230,12 +288,35 @@ function platformCommand(state,s,cmd,args,raw){ const host=h(state,s);
   if(cmd==="rabbitmqctl")return args[0]==="list_queues"?"name\tmessages\nlab.events\t0\nlab.jobs\t12":`Cluster status of node rabbit@${s.host} ...\nDisk Nodes: [rabbit@rabbitmq01,rabbit@rabbitmq02,rabbit@rabbitmq03]\nRunning Nodes: ${state.rabbitOnline}\nPartitions: []`;
   if(cmd==="nodetool")return args[0]==="repair"?"Repair completed successfully":`Datacenter: ${host.dc}\nStatus=Up/Down | State=Normal\nUN  ${host.ip}  82.4 GB  256 tokens  rack1`;
   if(cmd==="curl"){if(raw.includes("9200/_cluster/settings")&&/allocation[._]enable|allocation[^a-z]+enable/i.test(raw)&&/all/i.test(raw)){state.elasticAllocation="all";state.elastic="green";serviceLog(state,"elasticsearch02","elasticsearch","cluster.routing.allocation.enable set to all; unassigned primary shards allocated","notice");event(state,"info","Elasticsearch shard allocation restored; cluster is GREEN.");return '{"acknowledged":true,"persistent":{"cluster.routing.allocation.enable":"all"}}';}if(raw.includes("9200/_cluster/settings"))return JSON.stringify({persistent:{"cluster.routing.allocation.enable":state.elasticAllocation}},null,2);if(raw.includes("9200/_cluster/allocation/explain"))return JSON.stringify({index:"app-events-2026.08.02",shard:2,primary:true,current_state:"unassigned",unassigned_info:{reason:"ALLOCATION_FAILED"},allocate_explanation:state.elasticAllocation==="none"?"cannot allocate because cluster.routing.allocation.enable is [none]":"allocation is permitted"},null,2);if(raw.includes("9200/_cluster/health"))return JSON.stringify({cluster_name:"lab-search",status:state.elastic,number_of_nodes:3,active_primary_shards:state.elastic==="green"?24:21,unassigned_shards:state.elastic==="green"?0:3},null,2); if(raw.includes("9200/_cat/nodes"))return "ip heap.percent ram.percent cpu load_1m node.role master name\n10.10.62.21 24 62 3 0.12 cdfhilmrstw * elasticsearch01\n10.10.62.22 19 58 2 0.08 cdfhilmrstw - elasticsearch02\n10.10.62.23 21 60 2 0.10 cdfhilmrstw - elasticsearch03"; return "HTTP/1.1 200 OK\nX-Lab-Simulation: true\n\nhealthy";}
-  if(cmd==="showmount")return "Export list for san-vip:\n/exports/app 10.10.0.0/16\n/exports/backups 10.10.0.0/16";
+  if(cmd==="showmount"){
+    const flags=args.filter(a=>a.startsWith("-")).join("").replace(/-/g,"");
+    const unsupported=[...flags].find(flag=>!"eadhv".includes(flag));
+    if(unsupported)return `showmount: unknown option -- ${unsupported}\nUsage: showmount [-ade] [host]`;
+    const localDc=h(state,s)?.dc||"primary",recovery=localDc==="recovery";
+    const serverName=recovery?"dr-san-vip":"san-vip";
+    const serverVip=recovery?"10.20.30.10":state.clusters.storage.vip;
+    const server=recovery?state.hosts["dr-san01"]:(state.hosts[state.clusters.storage.owner]||state.hosts.san01);
+    const exported=(server?.files["/etc/exports"]||"").split("\n").map(line=>line.trim()).filter(line=>line&&!line.startsWith("#"))
+      .map(line=>{const [path,spec=""]=line.split(/\s+/);return {path,clients:spec.replace(/\(.*\)/,"")};});
+    if(flags.includes("a")){
+      const rows=new Set();
+      for(const host of Object.values(state.hosts)){
+        if(host.dc!==localDc)continue;
+        for(const entry of host.mounts||[]){
+          const match=entry.match(/^(\S+):(\S+) on /);
+          if(match&&match[1]===serverVip&&exported.some(item=>item.path===match[2]))rows.add(`${host.ip}:${match[2]}`);
+        }
+      }
+      return `All mount points on ${serverName}:\n${[...rows].sort().join("\n")||"(no client mounts)"}`;
+    }
+    if(flags.includes("d"))return `Directories on ${serverName}:\n${exported.map(item=>item.path).join("\n")}`;
+    return `Export list for ${serverName}:\n${exported.map(item=>`${item.path} ${item.clients}`).join("\n")}`;
+  }
   return null;
 }
 
 function networking(state,s,cmd,args,raw){ const host=h(state,s);
-  if(cmd==="ip"){if(args[0]==="a"||args[0]==="addr") { const vip=Object.values(state.clusters).find(c=>c.owner===s.host)?.vip; return host.interfaces.map((x,i)=>`${i+1}: ${x.name}: <BROADCAST,MULTICAST,${x.state}> mtu 1500 state ${x.state}${x.ip?`\n    inet ${x.ip} scope global ${x.name}`:""}`).join("\n")+(vip?`\n    inet ${vip}/24 scope global secondary ens192` :"");} if(args[0]==="route")return host.routes.join("\n"); if(args[0]==="link")return host.interfaces.map((x,i)=>`${i+1}: ${x.name}: <${x.state}> state ${x.state}`).join("\n");}
+  if(cmd==="ip"){if(args[0]==="a"||args[0]==="addr") { const vip=Object.values(state.clusters).find(c=>c.owner===s.host)?.vip; return host.interfaces.map((x,i)=>{const loopback=x.name==="lo";return `${i+1}: ${x.name}: <${loopback?"LOOPBACK,UP,LOWER_UP":`BROADCAST,MULTICAST,${x.state},LOWER_UP`}> mtu ${loopback?65536:1500} state ${loopback?"UNKNOWN":x.state}${x.ip?`\n    inet ${x.ip} scope ${loopback?"host":"global"} ${x.name}`:""}`}).join("\n")+(vip?`\n    inet ${vip}/24 scope global secondary ens192` :"");} if(args[0]==="route")return host.routes.join("\n"); if(args[0]==="link")return host.interfaces.map((x,i)=>`${i+1}: ${x.name}: <${x.state}> state ${x.state}`).join("\n");}
   if(cmd==="dig"||cmd==="nslookup"){const name=args.find(a=>!a.startsWith("+"))||"app.lab.internal",dnsOk=host.files["/etc/resolv.conf"]?.includes(host.dc==="recovery"?"10.20.50.11":"10.10.50.11");return dnsOk?`; <<>> DiG 9.11 <<>> ${name}\n;; status: NOERROR\n${name}. 300 IN A ${name.startsWith("dns01")?"10.10.50.11":state.clusters.database.vip}`:`;; communications error to 127.0.0.1#53: connection refused\n;; no servers could be reached`;}
   if(cmd==="ping"){const target=args.at(-1),dest=state.hosts[aliases[target]||target]; if(dest&&!dest.online)return `From ${host.ip} icmp_seq=1 Destination Host Unreachable`;return `PING ${target} (${dest?.ip||"10.10.10.10"}) 56(84) bytes of data.\n64 bytes from ${dest?.ip||"10.10.10.10"}: icmp_seq=1 ttl=64 time=0.421 ms\n\n--- ${target} ping statistics ---\n1 packets transmitted, 1 received, 0% packet loss`;}
   if(cmd==="telnet"){if(!host.packages.some(pkg=>pkg.startsWith("telnet-")))return "-bash: telnet: command not found";const target=args[0],port=Number(args[1]||23),dest=state.hosts[aliases[target]||target]||Object.values(state.hosts).find(candidate=>candidate.ip===target);if(!dest)return `telnet: ${target}: Name or service not known`;if(!dest.online)return `Trying ${dest.ip}...\ntelnet: connect to address ${dest.ip}: No route to host`;const open=port===22||(port===7789&&dest.hostname.includes("mysql-core")&&!state.clusters.database.drbdPortBlocked&&isActive(dest.services.drbd))||(port===3306&&isActive(dest.services.mariadb))||(port===21&&isActive(dest.services["pure-ftpd"])&&state.ftp.tlsValid&&state.ftp.passiveOpen)||(port===80&&(isActive(dest.services.haproxy)||isActive(dest.services.nginx)));return open?`Trying ${dest.ip}...\nConnected to ${dest.ip}.\nEscape character is '^]'.\nConnection closed by foreign host.`:`Trying ${dest.ip}...\ntelnet: connect to address ${dest.ip}: Connection refused`;}
@@ -287,7 +368,7 @@ function brctlShow(host){
 
 function domainXml(name,vm){return `<domain type='kvm'>\n  <name>${name}</name>\n  <memory unit='MiB'>${vm.memoryMiB}</memory>\n  <currentMemory unit='MiB'>${vm.memoryMiB}</currentMemory>\n  <vcpu placement='static'>${vm.vcpus}</vcpu>\n  <os>\n    <type arch='x86_64' machine='pc-q35-rhel8.6.0'>hvm</type>\n  </os>\n  <devices>\n    <emulator>/usr/libexec/qemu-kvm</emulator>\n    <interface type='bridge'>\n      <source bridge='br0'/>\n      <target dev='vnet1'/>\n      <model type='virtio'/>\n    </interface>\n  </devices>\n</domain>\n`;}
 
-function systemInfo(state,s,cmd,args){const host=h(state,s); switch(cmd){case"hostname":return s.host;case"hostnamectl":return `Static hostname: ${s.host}\nOperating System: CentOS Linux 8 (Lab)\nKernel: Linux 4.18.0-477.el8.x86_64\nArchitecture: x86-64`;case"whoami":return s.user;case"id":{const u=args[0]||s.user,rec=host.users[u];return rec?`uid=${rec.uid}(${u}) gid=${rec.uid}(${u}) groups=${rec.uid}(${rec.groups})`:`id: '${u}': no such user`;}case"date":return state.time+" IST";case"uptime":return ` 10:18:42 up ${host.uptime},  2 users,  load average: ${host.load}`;case"free":return "              total        used        free      shared  buff/cache   available\nMem:          15984        5212        7041         412        3731       10120\nSwap:          4095           0        4095";case"df":return `Filesystem                  Size  Used Avail Use% Mounted on\n/dev/mapper/lab-root          80G   ${Math.round(host.disk*.8)}G  ${Math.round(80-host.disk*.8)}G  ${host.disk}% /\n/dev/drbd0                   500G  305G  195G  ${host.disk}% /exports/app`;case"du":return duCommand(host,s,args);case"uname":return "Linux "+s.host+" 4.18.0-477.el8.x86_64 #1 SMP x86_64 GNU/Linux";case"ps":return `USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND\nroot 1 0.0 0.1 193732 9100 ? Ss Jul29 0:08 /usr/lib/systemd/systemd\nmysql 2210 0.4 8.1 2751032 637120 ? Ssl 10:12 3:42 /usr/sbin/mysqld\nroot 944 0.0 0.1 112932 7252 ? Ss Jul29 0:01 /usr/sbin/sshd -D`;case"top":return `top - 10:18:42 up ${host.uptime}, 2 users, load average: ${host.load}\nTasks: 147 total, 1 running, 146 sleeping\n%Cpu(s): 2.1 us, 0.7 sy, 97.2 id\nMiB Mem : 15984 total, 7041 free`;case"lsblk":return "NAME MAJ:MIN RM SIZE RO TYPE MOUNTPOINT\nsda 8:0 0 100G 0 disk\n├─sda1 8:1 0 1G 0 part /boot\n└─sda2 8:2 0 99G 0 part\n  └─lab-root 253:0 0 80G 0 lvm /\ndrbd0 147:0 0 500G 0 disk /exports/app";case"blkid":return '/dev/sda1: UUID="LAB-BOOT" TYPE="xfs"\n/dev/mapper/lab-root: UUID="LAB-ROOT" TYPE="xfs"';case"mount":return host.mounts.join("\n");case"rpm":return host.packages.join("\n");case"getenforce":return host.selinux||"Enforcing";case"dmesg":return `[    0.000000] Linux version 4.18.0-477.el8.x86_64\n[    2.154201] ${s.host} kernel: lab network interfaces initialized\n[    4.911250] XFS (dm-0): Ending clean mount`;default:return null;}}
+function systemInfo(state,s,cmd,args){const host=h(state,s); switch(cmd){case"hostname":return s.host;case"hostnamectl":return `Static hostname: ${s.host}\nOperating System: CentOS Linux 8 (Lab)\nKernel: Linux 4.18.0-477.el8.x86_64\nArchitecture: x86-64`;case"whoami":return s.user;case"id":{const u=args[0]||s.user,rec=host.users[u];return rec?`uid=${rec.uid}(${u}) gid=${rec.uid}(${u}) groups=${rec.uid}(${rec.groups})`:`id: '${u}': no such user`;}case"date":return state.time+" IST";case"uptime":return ` 10:18:42 up ${host.uptime},  2 users,  load average: ${host.load}`;case"free":return "              total        used        free      shared  buff/cache   available\nMem:          15984        5212        7041         412        3731       10120\nSwap:          4095           0        4095";case"df":return dfCommand(host);case"du":return duCommand(host,s,args);case"uname":return "Linux "+s.host+" 4.18.0-477.el8.x86_64 #1 SMP x86_64 GNU/Linux";case"ps":return psCommand(state,s);case"top":return `top - 10:18:42 up ${host.uptime}, 2 users, load average: ${host.load}\nTasks: 147 total, 1 running, 146 sleeping\n%Cpu(s): 2.1 us, 0.7 sy, 97.2 id\nMiB Mem : 15984 total, 7041 free`;case"lsblk":return "NAME MAJ:MIN RM SIZE RO TYPE MOUNTPOINT\nsda 8:0 0 100G 0 disk\n├─sda1 8:1 0 1G 0 part /boot\n└─sda2 8:2 0 99G 0 part\n  └─lab-root 253:0 0 80G 0 lvm /\ndrbd0 147:0 0 500G 0 disk /exports/app";case"blkid":return '/dev/sda1: UUID="LAB-BOOT" TYPE="xfs"\n/dev/mapper/lab-root: UUID="LAB-ROOT" TYPE="xfs"';case"mount":return host.mounts.join("\n");case"rpm":return host.packages.join("\n");case"getenforce":return host.selinux||"Enforcing";case"dmesg":return `[    0.000000] Linux version 4.18.0-477.el8.x86_64\n[    2.154201] ${s.host} kernel: lab network interfaces initialized\n[    4.911250] XFS (dm-0): Ending clean mount`;default:return null;}}
 
 export function execute(state,s,raw){
   const input=raw.trim();if(!input)return "";const connectedHost=h(state,s);
@@ -313,8 +394,26 @@ function executeSingle(state,s,input){
     return cmd==="getent"?`${user}:x:${record.uid}:${record.uid}:Lab Administrator:/home/${user}:/bin/bash`:`uid=${record.uid}(${user}) gid=${record.uid}(${user}) groups=${record.uid}(${record.groups})`;
   }
   if(cmd==="setenforce"){h(state,s).selinux=args[0]==="0"||args[0]?.toLowerCase()==="permissive"?"Permissive":"Enforcing";return "";}
-  if(cmd==="umount"){const target=args.at(-1);h(state,s).mounts=h(state,s).mounts.filter(m=>!m.includes(` on ${target} `));event(state,"warning",`${target} unmounted on ${s.host}.`);return "";}
-  if(cmd==="mount"&&args.length){const target=args.at(-1),source=args.at(-2)||"10.10.30.10:/exports/app";h(state,s).mounts.push(`${source} on ${target} type nfs4 (rw,relatime)`);return "";}
+  if(cmd==="umount"){const host=h(state,s),flags=args.filter(a=>a.startsWith("-")).join(""),operands=args.filter(a=>!a.startsWith("-"));
+    if(flags.includes("a")){const removed=host.mounts.filter(m=>!/ on \/ /.test(m));host.mounts=host.mounts.filter(m=>/ on \/ /.test(m));if(removed.length)event(state,"warning",`${removed.length} filesystem(s) unmounted on ${s.host}.`);return "";}
+    const target=operands[0];if(!target)return "umount: bad usage\nTry 'umount --help' for more information.";
+    if(!host.mounts.some(m=>m.includes(` on ${target} `)))return `umount: ${target}: not mounted.`;
+    host.mounts=host.mounts.filter(m=>!m.includes(` on ${target} `));event(state,"warning",`${target} unmounted on ${s.host}.`);return "";}
+  if(cmd==="mount"&&args.length){const host=h(state,s),flags=args.filter(a=>a.startsWith("-")).join(""),operands=args.filter(a=>!a.startsWith("-"));
+    const mounted=target=>host.mounts.some(m=>m.includes(` on ${target} `));
+    if(flags.includes("a")){const added=[];
+      for(const line of (host.files["/etc/fstab"]||"").split("\n")){
+        const row=line.trim();if(!row||row.startsWith("#"))continue;
+        const [source,target,type,options=""]=row.split(/\s+/);
+        if(!source||!target||target==="/"||type==="swap"||mounted(target))continue;
+        host.mounts.push(`${source} on ${target} type ${type} (rw,relatime${options.includes("_netdev")?",_netdev":""})`);added.push(target);
+      }
+      if(added.length)event(state,"info",`mount -a mounted ${added.join(", ")} on ${s.host}.`);
+      return "";}
+    if(operands.length<2)return "mount: bad usage\nTry 'mount --help' for more information.";
+    const [source,target]=operands;
+    if(mounted(target))return `mount: ${target}: already mounted.`;
+    host.mounts.push(`${source} on ${target} type nfs4 (rw,relatime)`);event(state,"info",`${source} mounted at ${target} on ${s.host}.`);return "";}
   if(cmd==="kill")return args.at(-1)==="1"?"-bash: kill: (1) - Operation not permitted":`Process ${args.at(-1)} terminated (simulated).`;
   if(cmd==="lsof")return `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nsshd 944 root 3u IPv4 22101 0t0 TCP *:ssh (LISTEN)`;
   if(cmd==="/usr/libexec/qemu-kvm")return `Supported machines are:\npc-q35-rhel8.6.0  RHEL 8.6.0 PC (Q35 + ICH9, 2009)\npc-i440fx-rhel7.6.0 RHEL 7.6.0 PC (i440FX + PIIX, 1996)\nq35                 Standard PC (Q35 + ICH9, 2009)`;

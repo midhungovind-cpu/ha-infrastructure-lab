@@ -478,3 +478,138 @@ test("pcs move accepts --node and supports clearing temporary constraint",()=>{
   assert.match(execute(state,session,"pcs resource clear database-group"),/Removing constraint/);
   assert.match(execute(state,session,"pcs constraint"),/No temporary location constraints/);
 });
+
+test("ps reports the host's own running services, not a fixed process list",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@haproxy01");
+  const listing=execute(state,session,"ps aux");
+  assert.match(listing,/\/usr\/sbin\/haproxy/);
+  assert.doesNotMatch(listing,/mysqld/,"an HAProxy node must not advertise a mysqld process");
+  execute(state,session,"exit");
+  execute(state,session,"ssh root@mysql-core01");
+  const database=execute(state,session,"ps aux");
+  assert.match(database,/mysqld/);
+  assert.doesNotMatch(database,/haproxy/);
+});
+
+test("stale pid drill can be verified with ps before removing the pid file",()=>{
+  const state=createInitialState(),session=newSession();
+  injectScenario(state,1);
+  execute(state,session,"ssh root@haproxy01");
+  assert.equal(execute(state,session,"ps aux | grep haproxy"),"","no haproxy process owns the stale pid file");
+  const stale=execute(state,session,"cat /run/haproxy.pid").trim();
+  assert.doesNotMatch(execute(state,session,"ps aux"),new RegExp(`\\s${stale}\\s`),"the stale pid must not appear in the process table");
+  execute(state,session,"rm -f /run/haproxy.pid");
+  execute(state,session,"systemctl start haproxy");
+  assert.match(execute(state,session,"ps aux | grep haproxy"),/\/usr\/sbin\/haproxy/);
+});
+
+test("systemctl status reports a live start time and drops Main PID when stopped",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@web01");
+  const before=execute(state,session,"systemctl status nginx");
+  assert.match(before,/Main PID: \d+/);
+  execute(state,session,"systemctl restart nginx");
+  const after=execute(state,session,"systemctl status nginx");
+  assert.notEqual(before.match(/Active:.*/)[0],after.match(/Active:.*/)[0],"restart must advance the since timestamp");
+  execute(state,session,"systemctl stop nginx");
+  const stopped=execute(state,session,"systemctl status nginx");
+  assert.doesNotMatch(stopped,/Main PID/,"a dead unit has no Main PID");
+  assert.match(stopped,/inactive \(dead\)/);
+});
+
+test("systemctl status pid agrees with the process table",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@san01");
+  const pid=execute(state,session,"systemctl status nfs").match(/Main PID: (\d+)/)[1];
+  assert.match(execute(state,session,"ps aux"),new RegExp(`\\s${pid}\\s`),"systemctl and ps must agree on the pid");
+});
+
+test("starting a cluster-managed resource on the standby is stopped by the cluster",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@san02");
+  assert.equal(state.clusters.storage.owner,"san01");
+  const result=execute(state,session,"systemctl start nfs");
+  assert.match(result,/stopped it/);
+  assert.equal(state.hosts.san02.services["nfs-server"],"inactive (dead)");
+  assert.equal(state.hosts.san01.services["nfs-server"],"active (running)");
+  assert.match(execute(state,session,"pcs status"),/Failed Resource Actions/);
+  execute(state,session,"pcs resource cleanup");
+  assert.doesNotMatch(execute(state,session,"pcs status"),/Failed Resource Actions/);
+});
+
+test("the owning node may still start its own cluster resource",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@san01");
+  execute(state,session,"systemctl stop nfs");
+  execute(state,session,"pcs resource move storage-group san01");
+  assert.equal(execute(state,session,"systemctl start nfs"),"");
+  assert.equal(state.hosts.san01.services["nfs-server"],"active (running)");
+});
+
+test("mount parses flags and never invents a mountpoint",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@san01");
+  execute(state,session,"mount -a");
+  execute(state,session,"mount -a");
+  const listing=execute(state,session,"mount");
+  assert.doesNotMatch(listing,/ on -a /,"a flag must never become a mountpoint");
+  assert.equal(listing.split("\n").filter(line=>line.includes("/srv/app")).length,1,"mount -a is idempotent");
+  execute(state,session,"umount /srv/app");
+  assert.doesNotMatch(execute(state,session,"mount"),/\/srv\/app/);
+  execute(state,session,"mount -a");
+  assert.match(execute(state,session,"mount"),/\/srv\/app/,"mount -a remounts from fstab");
+  assert.match(execute(state,session,"umount /nowhere"),/not mounted/);
+});
+
+test("showmount honours its flags and follows /etc/exports",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@san01");
+  assert.match(execute(state,session,"showmount -e"),/Export list for san-vip/);
+  assert.match(execute(state,session,"showmount -a"),/All mount points on san-vip/);
+  assert.match(execute(state,session,"showmount -a"),/10\.10\.12\.21:\/exports\/app/);
+  assert.match(execute(state,session,"showmount -zzz"),/unknown option/);
+  saveEditedFile(state,"san01","/etc/exports","/exports/app 10.10.0.0/16(rw,sync)\n");
+  const exports=execute(state,session,"showmount -e");
+  assert.doesNotMatch(exports,/backups/,"showmount must reflect an edited /etc/exports");
+});
+
+test("df models the root and replicated volumes independently",()=>{
+  const state=createInitialState(),session=newSession();
+  injectScenario(state,8);
+  execute(state,session,"ssh root@san01");
+  const filled=execute(state,session,"df -h");
+  assert.match(filled,/98%\s+\//,"the root filesystem is the one that filled");
+  assert.match(filled,/61%\s+\/exports\/app/,"the replicated volume is unaffected by a core file in /tmp");
+  execute(state,session,"exit");
+  execute(state,session,"ssh root@haproxy01");
+  assert.doesNotMatch(execute(state,session,"df -h"),/drbd0/,"a node without DRBD has no replicated volume");
+});
+
+test("ip a renders loopback with kernel-accurate flags and scope",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@san01");
+  const addresses=execute(state,session,"ip a");
+  assert.match(addresses,/lo: <LOOPBACK,UP,LOWER_UP>/);
+  assert.match(addresses,/inet 127\.0\.0\.1\/8 scope host lo/);
+  assert.match(addresses,/ens192: <BROADCAST,MULTICAST,UP,LOWER_UP>/);
+});
+
+test("pcs resource clear only reports a removal when a constraint exists",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@san01");
+  assert.match(execute(state,session,"pcs resource clear storage-group"),/No move constraint/);
+  execute(state,session,"pcs resource move storage-group san02");
+  assert.match(execute(state,session,"pcs resource clear storage-group"),/Removing constraint/);
+  assert.match(execute(state,session,"pcs resource clear storage-group"),/No move constraint/);
+});
+
+test("tail and wc treat a trailing newline as a terminator",()=>{
+  const state=createInitialState(),session=newSession();
+  execute(state,session,"ssh root@san01");
+  const last="Aug 01 10:12:00 san01 systemd[1]: Started Lab infrastructure services.";
+  assert.equal(execute(state,session,"tail -1 /var/log/messages"),last);
+  assert.equal(execute(state,session,"cat /var/log/messages | tail -1"),last);
+  assert.equal(execute(state,session,"cat /etc/hosts | wc -l"),"4");
+  assert.notEqual(execute(state,session,"cat /etc/hosts | sort | head -1"),"","sort must not surface a phantom blank line");
+});

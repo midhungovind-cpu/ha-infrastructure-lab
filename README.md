@@ -102,6 +102,14 @@ tests/             engine unit tests (node --test)
 
 The engine favours consistent operational behaviour over emulating every shell feature. Safe pipelines support `grep`, `egrep`, `head`, `tail`, `sort` and `wc`; unsupported commands return an explicit lab message rather than pretending to work.
 
+Diagnostic output is derived from node state rather than fixed text, because the drills ask you to prove things with it:
+
+- `ps` lists only the services actually running on that node, with the same PID `systemctl status` reports — so "no process owns this PID file" is a check you can really make.
+- `systemctl status` records a start time and PID per service, so a restart is visible and a stopped unit has no `Main PID`.
+- `df` models the root and replicated volumes separately; filling `/tmp` does not move the DRBD volume's usage.
+- `mount -a` reads `/etc/fstab` and is idempotent, `showmount` reads `/etc/exports`, and both reject flags they do not implement.
+- Starting a Pacemaker-managed resource by hand on the standby node is stopped by the cluster and recorded as a failed action, as it would be on a real estate.
+
 ## Disclaimer
 
 All hostnames, IP addresses, credentials and configuration in this repository are fictional and exist only to model a topology. Addresses use RFC 1918 private ranges. Nothing here is taken from any employer or client environment.
