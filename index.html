@@ -4,11 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>HA Infrastructure Lab</title>
-    <link rel="stylesheet" href="styles.css?v=20260914.21" />
+    <link rel="stylesheet" href="styles.css?v=20260914.22" />
   </head>
   <body>
     <header class="topbar">
-      <div><span class="eyebrow">OPERATIONS SIMULATOR · BUILD 2026.09.14.21</span><h1>HA Infrastructure Lab</h1></div>
+      <div><span class="eyebrow">OPERATIONS SIMULATOR · BUILD 2026.09.14.22</span><h1>HA Infrastructure Lab</h1></div>
       <div class="notice">Simulated HA training environment — no real infrastructure access.</div>
       <div class="header-actions"><button id="saveSnapshot">Save snapshot</button><button id="resetLab" class="danger">Reset lab</button></div>
     </header>
@@ -44,6 +44,14 @@
       </section>
     </main>
     <dialog id="detailDialog"><button class="close-dialog" aria-label="Close">×</button><div id="dialogContent"></div></dialog>
+    <p id="storageNotice" role="status" hidden>Changes are running in memory but could not be saved. Browser storage may be full or unavailable; do not reload until you have preserved your work.</p>
+    <dialog id="actionDialog" aria-labelledby="actionTitle">
+      <form id="actionForm">
+        <h2 id="actionTitle"></h2><p id="actionDescription"></p>
+        <div id="snapshotNameSection"><label for="snapshotName">Snapshot name</label><input id="snapshotName" maxlength="100" autocomplete="off" /></div>
+        <div class="action-buttons"><button type="button" id="cancelAction">Cancel</button><button type="submit" id="confirmAction">Confirm</button></div>
+      </form>
+    </dialog>
     <dialog id="guidanceDialog" class="guidance-dialog" aria-labelledby="guidanceTitle">
       <button id="closeGuidance" class="close-dialog" aria-label="Close guidance" autofocus>×</button>
       <h2 id="guidanceTitle"></h2>
@@ -59,6 +67,6 @@
       <textarea id="fileEditor" aria-label="Virtual file contents" spellcheck="false"></textarea>
       <div class="editor-status"><span id="editorHost"></span><span>Ctrl+S save · Esc cancel · browser-local virtual file</span></div>
     </dialog>
-    <script type="module" src="src/app.js?v=20260914.21"></script>
+    <script type="module" src="src/app.js?v=20260914.22"></script>
   </body>
 </html>

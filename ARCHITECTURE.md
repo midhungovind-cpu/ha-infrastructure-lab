@@ -156,4 +156,8 @@ The goal is not to memorise commands. Read the cluster state, establish which no
 
 This repository intentionally does **not** simulate every Linux command, physical network, cloud API, authentication system or production control plane. Unsupported commands report that they are unavailable instead of silently pretending to work.
 
+Recovery hosts use unique addresses in the corresponding primary service subnet under 10.20.0.0/16. Web03 runs Lighttpd, and read replicas do not expose a DRBD device.
+
+The terminal models a subset of commands and options. Cross-host `scp`/`rsync`, arbitrary `kill` signals, and `lsof` file tracking are explicitly unavailable. `virsh edit` persists example XML; it does not implement a full libvirt XML validator or hardware redefinition. HTTP health and distributed-service checks are stateful abstractions, not real network probes.
+
 All names, addresses, credentials, configuration fragments and incidents are fictional. They exist only to support learning and interview discussion; they are not copied from an employer or client system.

@@ -14,7 +14,7 @@ Everything runs locally in the browser. There are no external connections, nothi
 
 Most HA knowledge is only provable in front of a rack. This is an attempt to make the *reasoning* provable instead: a deterministic model of a production-shaped estate, seventeen focused exercises drawn from real incident classes, and a success criterion for each one that a service restart alone cannot satisfy.
 
-The recurring theme across the drills is deliberate — **the process is running and the system is still broken.** A stale PID file, a stopped SQL thread, a Disconnected DRBD peer, an Elasticsearch cluster with allocation disabled: in every case `systemctl status` is green and the platform is not healthy.
+The recurring lesson is that **a running process alone does not prove a healthy service**. Replication and shard allocation can fail while their processes are running; other incidents, such as a stale PID, prevent the service from starting at all. Verify both process state and the client-facing result.
 
 ## Quick start
 
@@ -104,13 +104,15 @@ The engine favours consistent operational behaviour over emulating every shell f
 
 Site exercises 15–17 use `labctl site status|declare|promote|return` from the bastion. These are simulator-only operator controls, not Linux commands; run each action separately. See the [site recovery flow](ARCHITECTURE.md#across-sites) for the sequence and modelling boundaries. Exercises require new, relevant-host command evidence after injection.
 
-Diagnostic output is derived from node state rather than fixed text, because the drills ask you to prove things with it:
+The supported incident diagnostics use node state, because the drills ask you to prove things with it:
 
 - `ps` lists only the services actually running on that node, with the same PID `systemctl status` reports — so "no process owns this PID file" is a check you can really make.
 - `systemctl status` records a start time and PID per service, so a restart is visible and a stopped unit has no `Main PID`.
 - `df` models the root and replicated volumes separately; filling `/tmp` does not move the DRBD volume's usage.
-- `mount -a` reads `/etc/fstab` and is idempotent, `showmount` reads `/etc/exports`, and both reject flags they do not implement.
+- `mount -a` reads `/etc/fstab` and is idempotent; `showmount` reads `/etc/exports` and reports an unavailable NFS server.
 - Starting a Pacemaker-managed resource by hand on the standby node is stopped by the cluster and recorded as a failed action, as it would be on a real estate.
+
+Browser controls use in-page dialogs for hints, explanations, snapshots, reset and VM power confirmation. Clean-state restoration keeps named snapshots; **Reset lab** explicitly clears them. See [verification coverage](docs/VERIFICATION.md) for the tested paths and limitations.
 
 ## Disclaimer
 
