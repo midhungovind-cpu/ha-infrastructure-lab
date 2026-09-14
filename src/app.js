@@ -1,6 +1,7 @@
-import { loadState, saveState, resetState, createInitialState, event } from "./state.js?v=20260914.20";
-import { newSession, prompt as terminalPrompt, execute, completions, injectScenario, saveEditedFile, setHostPower } from "./engine.js?v=20260914.20";
-import { scenarios, assessScenario } from "./scenarios.js?v=20260914.20";
+import { loadState, saveState, resetState, createInitialState, event } from "./state.js?v=20260914.21";
+import { newSession, prompt as terminalPrompt, execute, completions, injectScenario, saveEditedFile, setHostPower } from "./engine.js?v=20260914.21";
+import { scenarios, assessScenario } from "./scenarios.js?v=20260914.21";
+import { guidanceForScenario } from "./guidance.js?v=20260914.21";
 
 let state=loadState(), sessions=[newSession(1)], activeSession=1, editorContext=null;
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -54,6 +55,17 @@ function openEditor(meta){editorContext={...meta,sessionId:activeSession};$('#ed
 function closeEditor(){editorContext=null;$('#editorDialog').close();$('#terminalInput').focus();}
 function saveEditor(){if(!editorContext)return;const result=saveEditedFile(state,editorContext.hostname,editorContext.path,$('#fileEditor').value,editorContext.user),session=sessions.find(x=>x.id===editorContext.sessionId);session?.output.push({kind:'output',text:`"${result.path}" ${result.lines}L, ${result.bytes}B written`});saveState(state);closeEditor();renderAll();}
 
+function openGuidance(id,kind){
+ const content=guidanceForScenario(scenarios.find(s=>s.id===Number(id)),kind);if(!content)return;
+ $('#guidanceTitle').textContent=content.title;
+ $('#guidanceBody').textContent=content.body;
+ $('#guidanceCommands').textContent=content.commands.join('\n');
+ $('#guidanceCommandSection').hidden=!content.commands.length;
+ $('#guidanceCondition').textContent=content.condition;
+ $('#guidanceConditionSection').hidden=!content.condition;
+ $('#guidanceDialog').showModal();
+}
+
 document.addEventListener('click',e=>{
  const panel=e.target.closest('[data-panel]');if(panel)switchPanel(panel.dataset.panel);
  const node=e.target.closest('[data-node]');if(node)openNode(node.dataset.node);
@@ -65,13 +77,14 @@ document.addEventListener('click',e=>{
  if(e.target.dataset.close){sessions=sessions.filter(s=>s.id!==Number(e.target.dataset.close));if(!sessions.length)sessions=[newSession(1)];activeSession=sessions[0].id;renderTerminal();}
  if(e.target.dataset.scenario){const snapshots=state.snapshots||[],completed=Object.fromEntries(Object.entries(state.scenarios||{}).filter(([,run])=>run.status==='completed'));state=createInitialState();state.snapshots=snapshots;state.scenarios=completed;sessions=[newSession(1)];activeSession=1;injectScenario(state,e.target.dataset.scenario);persist();}
  if(e.target.dataset.checkScenario){const id=Number(e.target.dataset.checkScenario),result=assessScenario(state,id),run=state.scenarios[id];run.lastCheck=result.message;run.lastCheckedAt=new Date().toISOString();if(result.passed){run.status='completed';run.active=false;run.completedAt=new Date().toISOString();event(state,'info',`Exercise ${id} completed: success conditions verified.`);}persist();}
- if(e.target.dataset.hint){const x=scenarios.find(s=>s.id==e.target.dataset.hint);alert(`Requested hint\n\n${x.hint}\n\nUseful commands:\n${x.commands.join('\n')}`);}
- if(e.target.dataset.solution){const x=scenarios.find(s=>s.id==e.target.dataset.solution);alert(`Requested explanation\n\n${x.explanation}\n\nResolution condition: ${x.success}`);}
+ const hint=e.target.closest('[data-hint]');if(hint)openGuidance(hint.dataset.hint,'hint');
+ const solution=e.target.closest('[data-solution]');if(solution)openGuidance(solution.dataset.solution,'solution');
  if(e.target.dataset.restore!==undefined){if(e.target.dataset.restore==='clean')state=createInitialState();else{const snap=state.snapshots[Number(e.target.dataset.restore)];const keep=state.snapshots;state=structuredClone(snap.state);state.snapshots=keep;}sessions=[newSession(1)];activeSession=1;event(state,'info','Lab snapshot restored.');persist();}
 });
 
 $('#terminalInput').addEventListener('keydown',e=>{const s=current();if(e.key==='Enter'){const raw=e.target.value;if(!raw.trim())return;e.preventDefault();s.output.push({kind:'command',prompt:terminalPrompt(s),text:raw,time:new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})});const result=execute(state,s,raw),editor=result?.editor;if(result?.clear)s.output=[];else if(!editor&&result!==undefined&&result!=="")s.output.push({kind:'output',text:String(result)});s.historyIndex=s.history.length;e.target.value='';saveState(state);renderAll();if(editor)openEditor(editor);}else if(e.key==='ArrowUp'){e.preventDefault();s.historyIndex=Math.max(0,s.historyIndex-1);e.target.value=s.history[s.historyIndex]||'';}else if(e.key==='ArrowDown'){e.preventDefault();s.historyIndex=Math.min(s.history.length,s.historyIndex+1);e.target.value=s.history[s.historyIndex]||'';}else if(e.key==='Tab'){e.preventDefault();const found=completions(e.target.value,state,s),parts=e.target.value.split(/\s+/),typed=parts.at(-1)||'';if(found.length){const common=found.reduce((a,b)=>{let i=0;while(i<a.length&&i<b.length&&a[i]===b[i])i++;return a.slice(0,i);});if(found.length===1||common.length>typed.length){parts[parts.length-1]=found.length===1?found[0]:common;e.target.value=parts.join(' ');}else{s.output.push({kind:'output',text:found.join('  ')});renderTerminal();}}}else if(e.ctrlKey&&e.key.toLowerCase()==='c'){e.preventDefault();s.output.push({kind:'command',prompt:terminalPrompt(s),text:e.target.value+'^C',time:new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})});e.target.value='';renderTerminal();}});
 $('#saveEditor').addEventListener('click',saveEditor);
+$('#closeGuidance').addEventListener('click',()=>$('#guidanceDialog').close());
 $('#cancelEditor').addEventListener('click',closeEditor);
 $('#fileEditor').addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();saveEditor();}else if(e.key==='Escape'){e.preventDefault();closeEditor();}});
 $('#saveSnapshot').addEventListener('click',()=>{const name=window.prompt('Snapshot name','Before incident change');if(!name)return;const copy=structuredClone(state);copy.snapshots=[];state.snapshots.push({name,created:new Date().toISOString(),state:copy});event(state,'info',`Snapshot “${name}” saved.`);persist();});

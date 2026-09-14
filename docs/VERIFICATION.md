@@ -1,15 +1,16 @@
 # Simulator verification — 14 September 2026
 
-Build: **2026.09.14.20**.
+Build: **2026.09.14.21** (guidance-dialog follow-up).
 
 ## Checks performed
 
-- `npm test`: **79 passing tests**, including individually reported recovery paths for all 17 exercises.
+- `npm test`: **82 passing tests**, including individually reported recovery paths for all 17 exercises and hint/explanation content checks.
 - Every exercise starts incomplete and has a working repair or explicit operator-action path.
 - Exercise completion survives state serialization.
 - Browser walkthrough: **17 of 17 resolved** using terminal commands and the Check resolution buttons; progress survives reload.
 - No browser console errors observed during this walkthrough.
 - Browser negative check: Elasticsearch allocation `none` stays unresolved; `all` resolves the incident.
+- Guidance follow-up: both hint and explanation dialogs opened for all 17 exercises; Close and Escape dismissed them. An unresolved exercise remained incomplete after viewing both. No console errors observed.
 
 ## Corrections covered
 

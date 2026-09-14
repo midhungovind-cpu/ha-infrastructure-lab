@@ -1,4 +1,4 @@
-import { aliases, event } from "./state.js?v=20260914.20";
+import { aliases, event } from "./state.js?v=20260914.21";
 
 const knownCommands = ["labctl","help","hostname","hostnamectl","whoami","id","getent","pwd","cd","ls","tree","cat","less","head","tail","sort","wc","touch","mkdir","rmdir","cp","mv","rm","ln","find","grep","egrep","sed","awk","vi","vim","nano","date","uptime","free","top","ps","kill","df","du","mount","umount","lsblk","blkid","lsof","uname","rpm","yum","systemctl","journalctl","dmesg","firewall-cmd","getenforce","setenforce","ip","ping","telnet","traceroute","dig","nslookup","ss","netstat","curl","wget","nmcli","bridge","brctl","virsh","ssh","scp","rsync","sudo","su","reboot","shutdown","pcs","crm","corosync-cfgtool","corosync-quorumtool","drbdadm","drbdsetup","mysql","mysqldump","showmount","haproxy","varnishadm","rabbitmqctl","nodetool","pure-pw","history","exit","logout","clear"];
 
