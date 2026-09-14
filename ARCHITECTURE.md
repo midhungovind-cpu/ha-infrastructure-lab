@@ -77,6 +77,16 @@ The model uses private `10.10.0.0/16` and `10.20.0.0/16` address spaces. The pri
 
 The recovery site is deliberately **not** an automatic failover target. The exercises require the operator to establish the primary site's condition, declare recovery readiness, promote the recovery site and perform a controlled return. This models the human decision needed when a site-level partition is ambiguous.
 
+Run these **simulator-only controls** from the bastion terminal:
+
+- Exercise 15: `labctl site status`, then `labctl site declare`.
+- Exercise 16: `labctl site status`, `labctl site declare`, then `labctl site promote`.
+- Exercise 17: `labctl site status`, then `labctl site return`.
+
+Each exercise starts independently. Promotion requires the modelled primary nodes to be isolated and the recovery services and replication to be healthy. Return requires primary nodes online and replication synchronized. Merely viewing status does not complete these exercises.
+
+`labctl` is not a real Linux command: it abstracts an operator-approved runbook, not real fencing, data reconciliation or DNS propagation. Primary VIPs stay in 10.10.0.0/16; promotion routes `app.lab.internal` to `dr-haproxy01` (10.20.10.21), not to an invented cross-site VIP. DNS is a logical routing simulation, including the recovery resolver; it is not a full DNS-server model.
+
 ## Virtualisation model
 
 `kvm01` and `kvm02` expose a small stateful libvirt-style inventory.

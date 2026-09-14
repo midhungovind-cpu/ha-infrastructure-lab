@@ -26,7 +26,7 @@ cd ha-infrastructure-lab
 npm start          # serves on http://127.0.0.1:4173
 ```
 
-Or open `index.html` directly in a modern browser — there is no build step.
+There is no build step. Use the local HTTP server above; opening `index.html` as a `file://` URL can block JavaScript modules.
 
 ```bash
 npm test           # engine unit tests
@@ -101,6 +101,8 @@ tests/             engine unit tests (node --test)
 ```
 
 The engine favours consistent operational behaviour over emulating every shell feature. Safe pipelines support `grep`, `egrep`, `head`, `tail`, `sort` and `wc`; unsupported commands return an explicit lab message rather than pretending to work.
+
+Site exercises 15–17 use `labctl site status|declare|promote|return` from the bastion. These are simulator-only operator controls, not Linux commands; run each action separately. See the [site recovery flow](ARCHITECTURE.md#across-sites) for the sequence and modelling boundaries. Exercises require new, relevant-host command evidence after injection.
 
 Diagnostic output is derived from node state rather than fixed text, because the drills ask you to prove things with it:
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createInitialState, ensureScenarioLogEvidence } from "../src/state.js";
+import { createInitialState, ensureScenarioLogEvidence, loadState } from "../src/state.js";
 import { completions, execute, injectScenario, newSession, prompt, saveEditedFile, setHostPower } from "../src/engine.js";
 import { assessScenario, scenarios } from "../src/scenarios.js";
 
@@ -315,7 +315,7 @@ test("exercise cards expose symptoms without leaking root causes",()=>{
   assert.match(scenarios.find(({id})=>id===14).explanation,/Erlang cookie/i);
 });
 
-test("all seventeen exercises have a working recovery or verification path",()=>{
+test("all seventeen exercises have a working recovery or verification path",async t=>{
   const paths={
     1:["ssh root@haproxy01","journalctl -u haproxy","rm /run/haproxy.pid","systemctl start haproxy"],
     2:["ssh root@haproxy01","sed -i '/INVALID/d' /etc/haproxy/haproxy.cfg","systemctl restart haproxy"],
@@ -331,13 +331,17 @@ test("all seventeen exercises have a working recovery or verification path",()=>
     14:["ssh root@rabbitmq01","journalctl -u rabbitmq-server","cp /etc/rabbitmq/lab.erlang.cookie /var/lib/rabbitmq/.erlang.cookie","systemctl start rabbitmq-server"],
     15:["ssh root@cassandra01","journalctl -u cassandra","sed -i 's/listen_address: 127.0.0.1/listen_address: 10.10.61.21/' /etc/cassandra/cassandra.yaml","systemctl start cassandra"],
     16:["ssh root@elasticsearch01","curl -s localhost:9200/_cluster/health?pretty","curl -X PUT localhost:9200/_cluster/settings -d '{\"persistent\":{\"cluster.routing.allocation.enable\":\"all\"}}'"],
-    18:["pcs status"],19:["pcs status"],20:["pcs status"]
+    18:["labctl site status","labctl site declare"],19:["labctl site status","labctl site declare","labctl site promote"],20:["labctl site status","labctl site return"]
   };
   for(const {id} of scenarios){
+    await t.test(`exercise ${id}`,()=>{
     const state=createInitialState(),session=newSession();
     injectScenario(state,id);
+    assert.equal(assessScenario(state,id).passed,false,`exercise ${id} must start incomplete`);
     paths[id].forEach(command=>execute(state,session,command));
     assert.equal(assessScenario(state,id).passed,true,`exercise ${id} must be completable`);
+    assert.equal(assessScenario(JSON.parse(JSON.stringify(state)),id).passed,true,"completion survives state serialization");
+    });
   }
 });
 
@@ -612,4 +616,123 @@ test("tail and wc treat a trailing newline as a terminator",()=>{
   assert.equal(execute(state,session,"cat /var/log/messages | tail -1"),last);
   assert.equal(execute(state,session,"cat /etc/hosts | wc -l"),"4");
   assert.notEqual(execute(state,session,"cat /etc/hosts | sort | head -1"),"","sort must not surface a phantom blank line");
+});
+
+test("rejected pipelines have no partial side effects and sudo preserves quoted pipes",()=>{
+  const state=createInitialState(),s=newSession();
+  execute(state,s,"ssh root@mysql-core01");
+  assert.match(execute(state,s,"systemctl stop mariadb | unsupported"),/not an allowlisted filter/);
+  assert.equal(state.clusters.database.owner,"mysql-core01");
+  assert.equal(state.hosts["mysql-core01"].services.mariadb,"active (running)");
+  assert.match(execute(state,s,"sudo grep 'db-vip|san-vip' /etc/hosts"),/db-vip/);
+  assert.equal(execute(state,s,"cat /etc/hosts | tail -0"),"");
+  state.hosts["mysql-core01"].files["/root/numbers"]="b\na\n";
+  assert.equal(execute(state,s,"sort /root/numbers"),"a\nb");
+});
+
+test("exercise evidence must be new and from a relevant host",()=>{
+  const state=createInitialState(),s=newSession();
+  execute(state,s,"ssh root@san01");
+  execute(state,s,"df -h");
+  injectScenario(state,8);
+  state.hosts.san01.disk=45;delete state.hosts.san01.files["/tmp/core.22011"];
+  assert.equal(assessScenario(state,8).passed,false,"pre-injection diagnostics do not count");
+  execute(state,s,"exit");execute(state,s,"df -h");
+  assert.equal(assessScenario(state,8).passed,false,"bastion disk does not prove SAN capacity");
+  execute(state,s,"ssh root@san01");execute(state,s,"df -h");
+  assert.equal(assessScenario(state,8).passed,true);
+});
+
+test("listed VM IDs agree with console and dominfo after a guest is stopped",()=>{
+  const state=createInitialState(),s=newSession();
+  execute(state,s,"ssh root@kvm01");execute(state,s,"virsh shutdown web01-vm");
+  const listing=execute(state,s,"virsh list --all");
+  const id=listing.match(/(\d+)\s+api01-vm/)[1];
+  assert.match(execute(state,s,`virsh dominfo ${id}`),/Name: api01-vm/);
+  execute(state,s,`virsh console ${id}`);
+  assert.equal(s.host,"web02");
+});
+
+test("either split-brain victim is supported but recovery cannot switch victims midway",()=>{
+  for(const victim of ["mysql-core01","mysql-core02"]){
+    const state=createInitialState(),s=newSession(),peer=victim==="mysql-core01"?"mysql-core02":"mysql-core01";
+    injectScenario(state,6);execute(state,s,`ssh root@${victim}`);
+    execute(state,s,"drbdadm secondary r0");execute(state,s,"drbdadm disconnect r0");
+    execute(state,s,`ssh root@${peer}`);
+    assert.match(execute(state,s,"drbdadm --discard-my-data connect r0"),/Need access/);
+    execute(state,s,"exit");execute(state,s,"drbdadm --discard-my-data connect r0");
+    assert.equal(state.clusters.database.owner,peer);
+    assert.equal(state.mysql.primary,peer);
+    assert.match(execute(state,s,"drbdadm status"),/r0 role:Secondary/);
+    assert.equal(assessScenario(state,6).passed,true);
+  }
+});
+
+test("duplicate-key incident stops only the SQL thread and SAN logs identify the root disk",()=>{
+  const state=createInitialState(),s=newSession();
+  injectScenario(state,4);assert.equal(state.mysql.io,true);assert.equal(state.mysql.sql,false);
+  injectScenario(state,8);execute(state,s,"ssh root@san01");
+  assert.match(execute(state,s,"journalctl -u nfs-server"),/root filesystem \/ usage critical at 98%/);
+});
+
+test("site drills require explicit actions and reject unsafe promotion or return",()=>{
+  for(const id of [18,19,20]){
+    const state=createInitialState(),s=newSession();injectScenario(state,id);
+    execute(state,s,"labctl site status");
+    assert.equal(assessScenario(state,id).passed,false,"status alone cannot complete site drills");
+  }
+  const state=createInitialState(),s=newSession();
+  assert.match(execute(state,s,"labctl site promote"),/not fully isolated/);
+  injectScenario(state,19);
+  assert.equal(state.clusters.database.owner,null);
+  assert.equal(state.clusters.database.quorum,false);
+  assert.match(execute(state,s,"labctl site promote"),/first run/);
+  state.mysql.lag=30;
+  assert.match(execute(state,s,"labctl site declare"),/synchronized/);
+  state.mysql.lag=0;
+  execute(state,s,"labctl site declare");execute(state,s,"labctl site promote");
+  assert.equal(assessScenario(state,19).passed,true);
+  assert.match(execute(state,s,"dig app.lab.internal"),/10\.20\.10\.21/);
+  assert.match(execute(state,s,"labctl site return"),/all primary nodes/);
+  injectScenario(state,20);
+  state.mysql.sql=false;
+  assert.match(execute(state,s,"labctl site return"),/synchronized/);
+  state.mysql.sql=true;
+  execute(state,s,"labctl site return");
+  assert.equal(assessScenario(state,20).passed,true);
+  assert.match(execute(state,s,"dig app.lab.internal"),/10\.10\.10\.10/);
+  assert.equal(state.clusters.database.owner,"mysql-core01");
+  assert.equal(state.clusters.database.roles,"Primary/Secondary");
+});
+
+test("Elasticsearch settings require an actual all value, not merely the word allocation",()=>{
+  const state=createInitialState(),s=newSession();injectScenario(state,16);
+  execute(state,s,"ssh root@elasticsearch01");
+  const put=value=>execute(state,s,`curl -X PUT localhost:9200/_cluster/settings -d '{"persistent":{"cluster.routing.allocation.enable":"${value}"}}'`);
+  put("none");
+  assert.equal(state.elastic,"red");
+  assert.equal(assessScenario(state,16).passed,false);
+  assert.match(put("garbage"),/error/);
+  assert.equal(state.elasticAllocation,"none");
+  put("all");assert.equal(assessScenario(state,16).passed,true);
+});
+
+test("unsupported shell chaining is rejected before executing any command",()=>{
+  const state=createInitialState(),s=newSession();execute(state,s,"ssh root@mysql-core01");
+  for(const operator of [";","&&","&"]){
+    assert.match(execute(state,s,`systemctl stop mariadb ${operator} hostname`),/not supported/);
+    assert.equal(state.clusters.database.owner,"mysql-core01");
+  }
+});
+
+test("older saved exercises can gather fresh evidence after migration",()=>{
+  const saved=createInitialState(),s=newSession();
+  injectScenario(saved,8);delete saved.scenarios[8].historyBaseline;
+  const prior=globalThis.localStorage;
+  try{
+    globalThis.localStorage={getItem:()=>JSON.stringify(saved)};
+    const restored=loadState();
+    execute(restored,s,"ssh root@san01");execute(restored,s,"rm -f /tmp/core.*");
+    assert.equal(assessScenario(restored,8).passed,true);
+  }finally{if(prior===undefined)delete globalThis.localStorage;else globalThis.localStorage=prior;}
 });
